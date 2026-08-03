@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Invisel Marketing Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#EEF1EF; --surface:#FFFFFF; --surface-2:#F5F7F6; --ink:#12181F; --ink-soft:#57626C;
+    --border:#DBE2DF; --accent:#0C8C82; --accent-ink:#075E57; --accent-soft:#E3F3F1;
+    --warn:#B9791F; --warn-soft:#FBF1DF; --danger:#B23B33; --danger-soft:#FBEAE8; --good:#1F7A54;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;font-size:14px;}
+  h1,h2,h3,h4{font-family:'Space Grotesk',sans-serif;margin:0;letter-spacing:-0.01em;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  .app{max-width:1280px;margin:0 auto;padding:20px 24px 60px;}
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:18px 0 20px;border-bottom:1px solid var(--border);margin-bottom:20px;flex-wrap:wrap;gap:12px;}
+  .brand{display:flex;align-items:center;gap:12px;}
+  .brand-mark{width:38px;height:38px;border-radius:9px;background:linear-gradient(135deg,var(--accent) 0%, #0a6b63 60%, #063f3a 100%);position:relative;flex:none;}
+  .brand-mark::after{content:"";position:absolute;inset:5px;border:1.5px solid rgba(255,255,255,.55);border-radius:5px;}
+  .brand h1{font-size:19px;color:var(--ink);}
+  .brand span{display:block;font-size:11.5px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;letter-spacing:.02em;}
+  .savebadge{font-size:11.5px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;display:flex;align-items:center;gap:6px;}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--good);}
+  .asof{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);}
+  .asof input{font-family:'IBM Plex Mono',monospace;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12.5px;background:var(--surface);}
+
+  .tabs{display:flex;gap:4px;margin-bottom:22px;border-bottom:1px solid var(--border);flex-wrap:wrap;}
+  .tab{padding:10px 16px;font-size:13px;font-weight:600;color:var(--ink-soft);cursor:pointer;border-bottom:2px solid transparent;user-select:none;}
+  .tab:hover{color:var(--ink);}
+  .tab.active{color:var(--accent-ink);border-bottom:2px solid var(--accent);}
+  .panel{display:none;}
+  .panel.active{display:block;animation:fade .18s ease;}
+  @keyframes fade{from{opacity:0;transform:translateY(3px);}to{opacity:1;transform:none;}}
+
+  .grid{display:grid;gap:14px;}
+  .grid-4{grid-template-columns:repeat(4,1fr);}
+  .grid-3{grid-template-columns:repeat(3,1fr);}
+  .grid-2{grid-template-columns:repeat(2,1fr);}
+  @media(max-width:900px){.grid-4{grid-template-columns:repeat(2,1fr);}.grid-3{grid-template-columns:repeat(2,1fr);}}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;}
+  .kpi{position:relative;overflow:hidden;}
+  .kpi::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--accent),rgba(12,140,130,0));}
+  .kpi .label{font-size:11.5px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;font-weight:600;}
+  .kpi .value{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;margin-top:6px;}
+  .kpi .sub{font-size:12px;color:var(--ink-soft);margin-top:4px;}
+  .badge{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;letter-spacing:.02em;}
+  .badge.good{background:var(--accent-soft);color:var(--accent-ink);}
+  .badge.warn{background:var(--warn-soft);color:var(--warn);}
+  .badge.bad{background:var(--danger-soft);color:var(--danger);}
+
+  .section-title{font-size:15px;margin:26px 0 12px;display:flex;align-items:center;gap:8px;}
+  .section-title .n{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);background:var(--surface-2);border:1px solid var(--border);padding:2px 7px;border-radius:6px;}
+
+  label.field{display:block;font-size:11.5px;color:var(--ink-soft);font-weight:600;margin-bottom:4px;text-transform:uppercase;letter-spacing:.03em;}
+  input[type=number],input[type=text],input[type=date],select{
+    width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-family:'IBM Plex Mono',monospace;font-size:13px;background:var(--surface);color:var(--ink);
+  }
+  input:focus,select:focus{outline:2px solid var(--accent-soft);border-color:var(--accent);}
+  .field-wrap{margin-bottom:12px;}
+  .hint{font-size:11px;color:var(--ink-soft);margin-top:4px;line-height:1.4;}
+  .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}
+
+  table{width:100%;border-collapse:collapse;font-size:12.8px;}
+  thead th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-soft);border-bottom:1px solid var(--border);padding:8px 10px;background:var(--surface-2);position:sticky;top:0;}
+  tbody td{padding:8px 10px;border-bottom:1px solid var(--border);}
+  tbody tr:hover{background:var(--surface-2);}
+  .num{font-family:'IBM Plex Mono',monospace;text-align:right;}
+  .tablewrap{max-height:480px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);}
+  .tablewrap table thead th{position:sticky;top:0;}
+
+  .btn{background:var(--accent);color:#fff;border:none;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;}
+  .btn:hover{background:var(--accent-ink);}
+  .btn.ghost{background:transparent;color:var(--accent-ink);border:1px solid var(--accent);}
+  .btn.ghost:hover{background:var(--accent-soft);}
+  .btn.small{padding:6px 11px;font-size:12px;}
+
+  .bar-track{height:8px;background:var(--surface-2);border-radius:6px;overflow:hidden;border:1px solid var(--border);}
+  .bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-ink));}
+
+  .dropzone{border:1.5px dashed var(--border);border-radius:var(--radius);padding:34px 20px;text-align:center;color:var(--ink-soft);background:var(--surface);cursor:pointer;}
+  .dropzone:hover{border-color:var(--accent);background:var(--accent-soft);}
+  .dropzone.drag{border-color:var(--accent);background:var(--accent-soft);}
+
+  .empty{padding:40px 20px;text-align:center;color:var(--ink-soft);}
+  .empty h4{color:var(--ink);margin-bottom:6px;}
+  .assumption-note{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--ink-soft);margin-bottom:14px;}
+  .assumption-note b{color:var(--ink);}
+  .checkline{display:flex;align-items:center;gap:8px;padding:6px 0;}
+  .footer-note{font-size:11.5px;color:var(--ink-soft);margin-top:30px;padding-top:14px;border-top:1px solid var(--border);}
+  ::-webkit-scrollbar{width:9px;height:9px;}
+  ::-webkit-scrollbar-thumb{background:#c7cfcc;border-radius:6px;}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div>
+        <h1>Invisel Marketing Console <span class="badge warn" style="vertical-align:middle;">Basic</span></h1>
+        <span>revenue targets &amp; pace only</span>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:18px;">
+      <div class="asof">
+        <span>As of</span>
+        <input type="date" id="asOfDate" onchange="onAsOfChange(this.value)" />
+      </div>
+      <button class="btn ghost small" onclick="init()">↻ Refresh</button>
+      <div class="savebadge"><span class="dot"></span><span id="saveStatus">synced to team</span></div>
+      <div class="hint" id="lastUpdated" style="font-family:'IBM Plex Mono',monospace;"></div>
+    </div>
+  </div>
+
+  <div id="storageWarning" style="display:none;background:var(--danger-soft);border:1px solid var(--danger);color:var(--danger);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;">
+    <b>Not syncing.</b> This browser tab can't reach shared storage, so changes won't appear here or in the other consoles. This usually means the file is open outside its Claude.ai preview. Open it from the chat's file preview rather than a downloaded/standalone copy, then hit Refresh.
+  </div>
+
+  <div class="assumption-note" style="margin-bottom:16px;">This is the basic view: revenue targets and pace only. Pricing, discount decisions, bundling, and customer data live in the Full marketing console — ask Arya/Finance for access if you need them.</div>
+
+  <div id="panel-overview" class="panel active"></div>
+
+  <div class="footer-note">
+    Targets and actuals sync live with the Finance console (open this file fresh, or hit Refresh, to pull the latest). This view intentionally excludes pricing, discount/bundle decisioning, and customer data.
+  </div>
+</div>
+
+<!-- REMOVED_PANELS_MARKER -->
+
+<script>
+/* ---------------------------------------------------------------------
+   STATE
+--------------------------------------------------------------------- */
+const DEFAULT_STATE = {
+  asOfDate: "2026-08-01",
+  activeMonth: "2026-08",
+  months: {
+    "2026-08": {
+      targets: { total: 14000000, shopify: 10000000, marketplace: 4000000 },
+      mtd: { shopifyRevenue: 0, marketplaceRevenue: 0, metaGoogleSpend: 0, amazonAdsSpend: 0 }
+    }
+  },
+  assumptions: {
+    metaGoogleAllocPct: 0.9246,
+    amazonAdsAllocPct: 0.0754,
+    blendedRoasTarget: 2.45,
+    incrementalRoasTarget: 2.55
+  },
+  dataVersion: 3
+};
+
+let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
+
+/* ---------------------------------------------------------------------
+   PERSISTENCE
+--------------------------------------------------------------------- */
+/* ============================================================
+   >>>>>  PASTE YOUR SYNC SETTINGS HERE — SEARCH "PASTE"  <<<<<
+   ============================================================
+   Paste your deployed Apps Script Web App URL here. This is the tier
+   meant for the widest audience — leave SYNC_WRITE_TOKEN blank to make
+   it strictly read-only (safe to share broadly), or set it to allow
+   editing targets/actuals from here too. */
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx7Iu7XJlvEQGQRfS8gBzleETxvCeqAHtVMRty0hIHy9IKtiLo9gxP9-sGN1Xw6Gymr/exec";   // <<< PASTE YOUR WEB APP URL BETWEEN THESE QUOTES
+const SYNC_WRITE_TOKEN = "";  // <<< PASTE YOUR WRITE_TOKEN BETWEEN THESE QUOTES (optional here)
+/* ============================================================ */
+const SYNC_SOURCE_NAME = "Marketing Console (Basic)";
+
+async function syncGet(key){
+  if(APPS_SCRIPT_URL){
+    try{
+      const res = await fetch(APPS_SCRIPT_URL + '?key=' + encodeURIComponent(key));
+      const data = await res.json();
+      if(data && data.ok && data.value!==null && data.value!==undefined){
+        return { key, value: data.value };
+      }
+      return null;
+    }catch(e){ return null; }
+  }
+  try{ return await window.storage.get(key, true); }catch(e){ return null; }
+}
+async function syncSet(key, value){
+  if(APPS_SCRIPT_URL){
+    if(!SYNC_WRITE_TOKEN) return false;
+    try{
+      await fetch(APPS_SCRIPT_URL, {
+        method:'POST',
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body: JSON.stringify({ action:'set', key, value, token: SYNC_WRITE_TOKEN, updatedBy: SYNC_SOURCE_NAME })
+      });
+      return true;
+    }catch(e){ return false; }
+  }
+  try{ await window.storage.set(key, value, true); return true; }catch(e){ return false; }
+}
+
+const COST_FIELDS_NEVER_HELD_HERE = ['cogsD2C','cogsB2B','marketplaceCogsPct','amazonCommissionPct','d2cShippingPct','marketplaceShippingPct','gstCancelRtoPct'];
+
+let saveTimer = null;
+async function loadState(){
+  try{
+    const res = await syncGet('invisel-console-state');
+    if(res && res.value){
+      const saved = JSON.parse(res.value);
+      state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), saved);
+      ['assumptions'].forEach(k=>{
+        state[k] = Object.assign({}, DEFAULT_STATE[k], saved[k]||{});
+      });
+      if(!saved.dataVersion || saved.dataVersion < 3){
+        const migratedMonths = {};
+        if(saved.targets || saved.mtd){
+          migratedMonths["2026-08"] = {
+            targets: Object.assign({}, DEFAULT_STATE.months["2026-08"].targets, saved.targets||{}),
+            mtd: Object.assign({}, DEFAULT_STATE.months["2026-08"].mtd, saved.mtd||{})
+          };
+        }
+        state.months = Object.keys(migratedMonths).length ? migratedMonths : JSON.parse(JSON.stringify(DEFAULT_STATE.months));
+        state.activeMonth = "2026-08";
+        delete state.targets;
+        delete state.mtd;
+      } else {
+        state.months = Object.assign({}, DEFAULT_STATE.months, saved.months||{});
+      }
+      state.dataVersion = 3;
+      if(!state.activeMonth || !state.months[state.activeMonth]){
+        state.activeMonth = Object.keys(state.months).sort()[0] || "2026-08";
+      }
+    }
+  }catch(e){ /* no saved state yet — use defaults */ }
+  // The shared state record is written by the Finance console and includes
+  // its real cost assumptions (COGS %, commission %, shipping %, GST %).
+  // This file has no use for them and must not hold them in memory even
+  // transiently, so they're deleted the moment they've been loaded.
+  COST_FIELDS_NEVER_HELD_HERE.forEach(k=>{ delete state.assumptions[k]; });
+  delete state.discountFloorPct;
+  delete state.bundleFloorPct;
+}
+function renderLastUpdated(){
+  const el2 = document.getElementById('lastUpdated');
+  if(!el2) return;
+  if(state.lastSavedAt){
+    const when = new Date(state.lastSavedAt).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'});
+    el2.textContent = `last updated ${when} · ${state.lastSavedBy||'unknown tool'}`;
+  } else {
+    el2.textContent = 'no shared updates yet';
+  }
+}
+function queueSave(){
+  document.getElementById('saveStatus').textContent = 'saving…';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    try{
+      // Read-merge-write: this file only ever edits months/targets/mtd.
+      // It must never write its own (deliberately cost-and-playbook-
+      // stripped) state object over Finance's or the Full marketing
+      // console's saved record.
+      let base = {};
+      try{
+        const res = await syncGet('invisel-console-state');
+        if(res && res.value) base = JSON.parse(res.value);
+      }catch(e){}
+      base.asOfDate = state.asOfDate;
+      base.activeMonth = state.activeMonth;
+      base.months = Object.assign({}, base.months||{}, state.months);
+      base.dataVersion = state.dataVersion;
+      base.lastSavedAt = new Date().toISOString();
+      base.lastSavedBy = 'Marketing Console (Basic)';
+      state.lastSavedAt = base.lastSavedAt; state.lastSavedBy = base.lastSavedBy;
+      await syncSet('invisel-console-state', JSON.stringify(base));
+      document.getElementById('saveStatus').textContent = 'synced to team';
+      renderLastUpdated();
+    }catch(e){
+      document.getElementById('saveStatus').textContent = 'save failed — retrying';
+    }
+  }, 500);
+}
+
+/* ---------------------------------------------------------------------
+   HELPERS
+--------------------------------------------------------------------- */
+function inr(n){
+  if(n===null||n===undefined||isNaN(n)) return "—";
+  const neg = n<0; n = Math.abs(n);
+  let s = "₹" + Math.round(n).toLocaleString('en-IN');
+  return neg? "("+s+")": s;
+}
+function inrLakh(n){
+  if(n===null||n===undefined||isNaN(n)) return "—";
+  return "₹" + (n/100000).toFixed(2) + "L";
+}
+function pct(n, d=1){ if(n===null||n===undefined||isNaN(n)) return "—"; return (n*100).toFixed(d)+"%"; }
+function withFocusPreserved(renderFn){
+  const active = document.activeElement;
+  let fid = null, start = null, end = null;
+  if(active && active.tagName==='INPUT' && active.dataset && active.dataset.fid){
+    fid = active.dataset.fid;
+    try{ start = active.selectionStart; end = active.selectionEnd; }catch(e){ start = null; end = null; }
+  }
+  renderFn();
+  if(fid){
+    const el2 = document.querySelector('[data-fid="'+fid+'"]');
+    if(el2){
+      el2.focus();
+      if(start!==null){
+        try{ el2.setSelectionRange(start, end); }catch(e){}
+      }
+    }
+  }
+}
+function clamp(n,a,b){ return Math.max(a,Math.min(b,n)); }
+function daysInMonthOf(monthKey){
+  const [y,m] = monthKey.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+function monthLabel(monthKey){
+  const [y,m] = monthKey.split('-').map(Number);
+  return new Date(y, m-1, 1).toLocaleDateString('en-IN', {month:'long', year:'numeric'});
+}
+function nextMonthKey(monthKey){
+  const [y,m] = monthKey.split('-').map(Number);
+  const d = new Date(y, m, 1);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+function getMonthDayInfo(monthKey, asOfDateStr){
+  const totalDays = daysInMonthOf(monthKey);
+  const asOf = new Date(asOfDateStr+"T00:00:00");
+  const asOfMonthKey = asOf.getFullYear() + '-' + String(asOf.getMonth()+1).padStart(2,'0');
+  if(monthKey === asOfMonthKey){
+    const daysElapsed = clamp(asOf.getDate(), 1, totalDays);
+    return { totalDays, daysElapsed, daysRemaining: totalDays-daysElapsed, status:'current' };
+  }
+  if(monthKey < asOfMonthKey){
+    return { totalDays, daysElapsed: totalDays, daysRemaining: 0, status:'past' };
+  }
+  return { totalDays, daysElapsed: 0, daysRemaining: totalDays, status:'future' };
+}
+function ensureMonth(monthKey){
+  if(!state.months[monthKey]){
+    state.months[monthKey] = {
+      targets: { total: 0, shopify: 0, marketplace: 0 },
+      mtd: { shopifyRevenue: 0, marketplaceRevenue: 0, metaGoogleSpend: 0, amazonAdsSpend: 0 }
+    };
+  }
+  return state.months[monthKey];
+}
+function el(id){ return document.getElementById(id); }
+
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active', p.id==='panel-'+name));
+}
+
+function onAsOfChange(v){ state.asOfDate = v; queueSave(); renderOverview(); }
+function switchMonth(key){ state.activeMonth = key; ensureMonth(key); queueSave(); renderOverview(); }
+function addNextMonth(){
+  const latest = Object.keys(state.months).sort().slice(-1)[0] || state.activeMonth;
+  const nk = nextMonthKey(latest);
+  ensureMonth(nk);
+  state.activeMonth = nk;
+  queueSave();
+  renderOverview();
+}
+
+/* ---------------------------------------------------------------------
+   OVERVIEW & TARGETS
+--------------------------------------------------------------------- */
+function updateTarget(key, val){ ensureMonth(state.activeMonth).targets[key] = parseFloat(val)||0; queueSave(); withFocusPreserved(renderOverview); }
+function updateMtd(key, val){ ensureMonth(state.activeMonth).mtd[key] = parseFloat(val)||0; queueSave(); withFocusPreserved(renderOverview); }
+
+function computeMonthProjection(monthKey){
+  const s = state;
+  const m = ensureMonth(monthKey);
+  const dayInfo = getMonthDayInfo(monthKey, s.asOfDate);
+  const { totalDays, daysElapsed, daysRemaining, status } = dayInfo;
+
+  const mtdTotal = m.mtd.shopifyRevenue + m.mtd.marketplaceRevenue;
+  const mtdSpend = m.mtd.metaGoogleSpend + m.mtd.amazonAdsSpend;
+  const currentRoas = mtdSpend>0 ? mtdTotal/mtdSpend : null;
+
+  const effElapsed = Math.max(daysElapsed, status==='future'?0:1);
+  const paceTotal = status==='future' ? 0 : mtdTotal/effElapsed;
+  const paceShopify = status==='future' ? 0 : m.mtd.shopifyRevenue/effElapsed;
+  const paceMarketplace = status==='future' ? 0 : m.mtd.marketplaceRevenue/effElapsed;
+
+  const projTotal = status==='past' ? mtdTotal : paceTotal*totalDays;
+  const projShopify = status==='past' ? m.mtd.shopifyRevenue : paceShopify*totalDays;
+  const projMarketplace = status==='past' ? m.mtd.marketplaceRevenue : paceMarketplace*totalDays;
+
+  const gapTotal = m.targets.total - projTotal;
+  const gapShopify = m.targets.shopify - projShopify;
+  const gapMarketplace = m.targets.marketplace - projMarketplace;
+
+  const remainingNeeded = Math.max(m.targets.total - mtdTotal, 0);
+  const requiredDaily = daysRemaining>0 ? remainingNeeded/daysRemaining : remainingNeeded;
+
+  const incRevenueNeeded = Math.max(gapTotal,0);
+  const requiredIncSpend = incRevenueNeeded / s.assumptions.incrementalRoasTarget;
+  const reqMetaGoogle = requiredIncSpend * s.assumptions.metaGoogleAllocPct;
+  const reqAmazonAds = requiredIncSpend * s.assumptions.amazonAdsAllocPct;
+
+  return { m, dayInfo, mtdTotal, mtdSpend, currentRoas, projTotal, projShopify, projMarketplace,
+    gapTotal, gapShopify, gapMarketplace, requiredDaily, incRevenueNeeded, requiredIncSpend, reqMetaGoogle, reqAmazonAds };
+}
+
+function renderOverview(){
+  const s = state;
+  const activeKey = s.activeMonth;
+  const P = computeMonthProjection(activeKey);
+  const { m, dayInfo } = P;
+  const { totalDays, daysElapsed, daysRemaining, status } = dayInfo;
+
+  const targetSumMismatch = Math.abs((m.targets.shopify+m.targets.marketplace) - m.targets.total) > 1;
+
+  function statusBadge(proj, target){
+    if(!target) return '<span class="badge warn">no target set</span>';
+    const r = proj/target;
+    if(r>=1) return '<span class="badge good">on track</span>';
+    if(r>=0.85) return '<span class="badge warn">slightly behind</span>';
+    return '<span class="badge bad">behind</span>';
+  }
+
+  const monthOptions = Object.keys(s.months).sort().map(k=>`<option value="${k}" ${k===activeKey?'selected':''}>${monthLabel(k)}</option>`).join('');
+
+  const compareRows = Object.keys(s.months).sort().map(k=>{
+    const cp = computeMonthProjection(k);
+    const finalOrProj = cp.dayInfo.status==='past' ? cp.mtdTotal : cp.projTotal;
+    const label = cp.dayInfo.status==='past' ? 'Final' : cp.dayInfo.status==='current' ? 'Projected' : 'Not started';
+    return `<tr>
+      <td><b>${monthLabel(k)}</b> ${k===activeKey?'<span class="badge good">viewing</span>':''}</td>
+      <td class="num">${inr(cp.m.targets.total)}</td>
+      <td class="num">${inr(cp.mtdTotal)}</td>
+      <td class="num">${inr(finalOrProj)} <span class="hint">${label}</span></td>
+      <td class="num">${cp.m.targets.total? pct(finalOrProj/cp.m.targets.total):'—'}</td>
+      <td class="num">${cp.currentRoas? cp.currentRoas.toFixed(2)+'x':'—'}</td>
+      <td class="num">${inr(cp.mtdSpend)}</td>
+      <td><a href="javascript:void(0)" onclick="switchMonth('${k}')" style="color:var(--accent-ink);font-size:12px;">view</a></td>
+    </tr>`;
+  }).join('');
+
+  el('panel-overview').innerHTML = `
+    <div class="card" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;">
+      <label class="field" style="margin:0;">Planning month</label>
+      <select onchange="switchMonth(this.value)" style="width:auto;min-width:180px;">${monthOptions}</select>
+      <button class="btn ghost small" onclick="addNextMonth()">+ Add next month</button>
+      <span class="hint">${status==='past'?'This month is complete — figures below are final, not projected.':status==='future'?"This month hasn't started yet — projection will kick in once it does.":'Currently in progress.'}</span>
+    </div>
+
+    ${targetSumMismatch? `<div class="assumption-note"><b>Heads up:</b> Shopify target + Marketplace target doesn't add up to the Total target for ${monthLabel(activeKey)}.</div>` : ''}
+
+    <div class="section-title">${monthLabel(activeKey)} Targets <span class="n">editable</span></div>
+    <div class="grid grid-3">
+      <div class="card"><label class="field">Total Target (₹)</label><input type="number" value="${m.targets.total}" data-fid="target-total" oninput="updateTarget('total', this.value)"/><div class="hint">${inrLakh(m.targets.total)}</div></div>
+      <div class="card"><label class="field">Shopify (Website) Target (₹)</label><input type="number" value="${m.targets.shopify}" data-fid="target-shopify" oninput="updateTarget('shopify', this.value)"/><div class="hint">${inrLakh(m.targets.shopify)}</div></div>
+      <div class="card"><label class="field">Marketplace Target — Amazon/Flipkart (₹)</label><input type="number" value="${m.targets.marketplace}" data-fid="target-marketplace" oninput="updateTarget('marketplace', this.value)"/><div class="hint">${inrLakh(m.targets.marketplace)}</div></div>
+    </div>
+
+    <div class="section-title">${status==='past'?'Final Actuals':'Month-to-Date Actuals'} <span class="n">editable</span></div>
+    <div class="grid grid-4">
+      <div class="card"><label class="field">Revenue — Shopify (₹)</label><input type="number" value="${m.mtd.shopifyRevenue}" data-fid="mtd-shopifyRevenue" oninput="updateMtd('shopifyRevenue', this.value)"/></div>
+      <div class="card"><label class="field">Revenue — Marketplace (₹)</label><input type="number" value="${m.mtd.marketplaceRevenue}" data-fid="mtd-marketplaceRevenue" oninput="updateMtd('marketplaceRevenue', this.value)"/></div>
+      <div class="card"><label class="field">Ad Spend — Meta &amp; Google (₹)</label><input type="number" value="${m.mtd.metaGoogleSpend}" data-fid="mtd-metaGoogleSpend" oninput="updateMtd('metaGoogleSpend', this.value)"/></div>
+      <div class="card"><label class="field">Ad Spend — Amazon Ads (₹)</label><input type="number" value="${m.mtd.amazonAdsSpend}" data-fid="mtd-amazonAdsSpend" oninput="updateMtd('amazonAdsSpend', this.value)"/></div>
+    </div>
+
+    <div class="section-title">Pace &amp; Projection <span class="n">Day ${daysElapsed} of ${totalDays} · ${daysRemaining} days left</span></div>
+    <div class="grid grid-4">
+      <div class="card kpi"><div class="label">Revenue So Far</div><div class="value">${inr(P.mtdTotal)}</div><div class="sub">${m.targets.total? pct(P.mtdTotal/m.targets.total):'—'} of target</div></div>
+      <div class="card kpi"><div class="label">${status==='past'?'Final Revenue':'Projected Month-End'}</div><div class="value">${inr(P.projTotal)}</div><div class="sub">${statusBadge(P.projTotal, m.targets.total)}</div></div>
+      <div class="card kpi"><div class="label">Gap to Target</div><div class="value" style="color:${P.gapTotal>0?'var(--danger)':'var(--good)'}">${inr(P.gapTotal)}</div><div class="sub">${P.gapTotal>0? 'need to close': 'ahead of plan'}</div></div>
+      <div class="card kpi"><div class="label">Required Daily Run-Rate</div><div class="value">${inr(P.requiredDaily)}</div><div class="sub">${daysRemaining>0? 'for the '+daysRemaining+' days left':'month is over'}</div></div>
+    </div>
+
+    <div class="grid grid-2" style="margin-top:14px;">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><b>Shopify</b>${statusBadge(P.projShopify, m.targets.shopify)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${m.targets.shopify?clamp(P.projShopify/m.targets.shopify*100,0,100):0}%"></div></div>
+        <div class="hint">${status==='past'?'Final':'Projected'} ${inr(P.projShopify)} vs target ${inr(m.targets.shopify)} · gap ${inr(P.gapShopify)}</div>
+      </div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><b>Marketplace (Amazon/Flipkart)</b>${statusBadge(P.projMarketplace, m.targets.marketplace)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${m.targets.marketplace?clamp(P.projMarketplace/m.targets.marketplace*100,0,100):0}%"></div></div>
+        <div class="hint">${status==='past'?'Final':'Projected'} ${inr(P.projMarketplace)} vs target ${inr(m.targets.marketplace)} · gap ${inr(P.gapMarketplace)}</div>
+      </div>
+    </div>
+
+    <div class="section-title">ROAS &amp; Ad Spend Required to Close the Gap</div>
+    <div class="grid grid-4">
+      <div class="card kpi"><div class="label">Current Blended ROAS</div><div class="value">${P.currentRoas? P.currentRoas.toFixed(2)+'x' : '—'}</div><div class="sub">target ${s.assumptions.blendedRoasTarget.toFixed(2)}x fixed</div></div>
+      <div class="card kpi"><div class="label">Incremental ROAS Target</div><div class="value">${s.assumptions.incrementalRoasTarget.toFixed(2)}x</div><div class="sub">used for gap-closing spend below</div></div>
+      <div class="card kpi"><div class="label">Extra Spend Needed (Meta+Google)</div><div class="value">${inr(P.reqMetaGoogle)}</div><div class="sub">${pct(s.assumptions.metaGoogleAllocPct)} of incremental budget</div></div>
+      <div class="card kpi"><div class="label">Extra Spend Needed (Amazon Ads)</div><div class="value">${inr(P.reqAmazonAds)}</div><div class="sub">${pct(s.assumptions.amazonAdsAllocPct)} of incremental budget</div></div>
+    </div>
+    <div class="hint" style="margin-top:8px;">Calculated as: revenue still needed to hit target (₹${(P.incRevenueNeeded/100000).toFixed(2)}L) ÷ incremental ROAS target, then split by the Meta/Google vs Amazon Ads spend allocation Finance has set. Whether hitting this target is actually profitable after costs and ad spend is a Finance-console view — this tab is revenue/spend only.</div>
+
+    <div class="section-title">Month-over-Month Comparison</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Month</th><th class="num">Target</th><th class="num">Revenue So Far</th><th class="num">Final/Projected</th><th class="num">% of Target</th><th class="num">ROAS</th><th class="num">Ad Spend</th><th></th></tr></thead>
+      <tbody>${compareRows}</tbody>
+    </table></div>
+  `;
+}
+
+/* ---------------------------------------------------------------------
+   INIT
+--------------------------------------------------------------------- */
+async function checkStorageAvailability(){
+  const warn = document.getElementById('storageWarning');
+  let available = false;
+  if(APPS_SCRIPT_URL){
+    try{
+      const res = await fetch(APPS_SCRIPT_URL + '?action=list');
+      const data = await res.json();
+      available = !!(data && data.ok);
+    }catch(e){ available = false; }
+    if(warn) warn.innerHTML = available
+      ? ''
+      : '<b>Not syncing.</b> Configured to use the Google Sheets backend, but the request failed. Check APPS_SCRIPT_URL is correct and the deployment allows "Anyone" access.';
+  } else {
+    available = typeof window.storage !== 'undefined' && typeof window.storage.get === 'function' && typeof window.storage.set === 'function';
+    if(warn) warn.innerHTML = available
+      ? ''
+      : '<b>Not syncing.</b> This browser tab can\'t reach shared storage. This usually means the file is open outside its Claude.ai preview, and no Google Sheets backend URL is configured yet.';
+  }
+  if(warn) warn.style.display = available ? 'none' : 'block';
+  return available;
+}
+async function init(){
+  await checkStorageAvailability();
+  await loadState();
+  el('asOfDate').value = state.asOfDate;
+  renderLastUpdated();
+  renderOverview();
+}
+init();
+</script>
+</body>
+</html>

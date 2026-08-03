@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Invisel Sync — Connection Test</title>
+<style>
+  body{font-family:'IBM Plex Mono',monospace;background:#0F1419;color:#E6EDEA;padding:30px;max-width:700px;margin:0 auto;}
+  h1{font-family:sans-serif;font-size:20px;color:#fff;}
+  .step{background:#161D22;border:1px solid #2A343A;border-radius:8px;padding:14px 16px;margin-bottom:12px;}
+  .step .label{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:#8A9AA3;}
+  .step .result{font-size:14px;margin-top:6px;white-space:pre-wrap;word-break:break-all;}
+  .pass{color:#3ED598;}
+  .fail{color:#FF6B6B;}
+  .pending{color:#E0B04A;}
+  .summary{margin-top:20px;padding:16px;border-radius:8px;font-weight:600;font-family:sans-serif;}
+  .summary.pass{background:#123324;border:1px solid #3ED598;}
+  .summary.fail{background:#3A1A1A;border:1px solid #FF6B6B;}
+</style>
+</head>
+<body>
+<h1>Invisel Sync — Connection Test</h1>
+<div id="protocolWarning" style="display:none;background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;border-radius:8px;padding:16px;margin-bottom:16px;font-family:sans-serif;font-size:14px;line-height:1.5;"></div>
+<div id="steps"></div>
+<div id="summary" class="summary" style="display:none;"></div>
+
+<script>
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx7Iu7XJlvEQGQRfS8gBzleETxvCeqAHtVMRty0hIHy9IKtiLo9gxP9-sGN1Xw6Gymr/exec";
+const WRITE_TOKEN = "invisel-2026-9x7q2m";
+const TEST_KEY = "invisel-connection-test";
+
+const isFileProtocol = window.location.protocol === 'file:';
+if(isFileProtocol){
+  const warn = document.getElementById('protocolWarning');
+  warn.style.display = 'block';
+  warn.innerHTML = '<b>⚠ You appear to have opened this file directly (address bar shows "file://...")</b><br/>' +
+    'Browsers block a local file from calling out to a remote address like your Apps Script URL — this is a security rule, not a problem with your setup. ' +
+    'The checks below will very likely fail with a generic "Failed to fetch" because of this, regardless of whether your backend is actually working. ' +
+    '<br/><br/><b>Fix:</b> host this file the same way you\'ll host the three consoles — drag it into <a href="https://app.netlify.com/drop" target="_blank" style="color:#F0C868;">app.netlify.com/drop</a> along with them, then open it from the URL Netlify gives you instead of from your computer. Then re-run this test.';
+}
+
+const steps = [
+  { id:'read', label:'Step 1 — Can we reach the backend at all? (GET ?action=list)' },
+  { id:'write', label:'Step 2 — Can we write a test value? (POST with token)' },
+  { id:'readback', label:'Step 3 — Can we read that value back?' },
+  { id:'match', label:'Step 4 — Does the value match what we wrote?' }
+];
+const container = document.getElementById('steps');
+steps.forEach(s=>{
+  const div = document.createElement('div');
+  div.className = 'step';
+  div.innerHTML = `<div class="label">${s.label}</div><div class="result pending" id="result-${s.id}">running…</div>`;
+  container.appendChild(div);
+});
+
+function setResult(id, ok, text){
+  const el = document.getElementById('result-'+id);
+  el.className = 'result ' + (ok ? 'pass' : 'fail');
+  el.textContent = (ok ? '✓ PASS — ' : '✗ FAIL — ') + text;
+  return ok;
+}
+
+async function run(){
+  let allOk = true;
+  const testValue = 'connection-test-' + Date.now();
+
+  // Step 1: basic reachability
+  let listData;
+  try{
+    const res = await fetch(APPS_SCRIPT_URL + '?action=list');
+    listData = await res.json();
+    allOk = setResult('read', !!(listData && listData.ok), JSON.stringify(listData)) && allOk;
+  }catch(e){
+    const hint = isFileProtocol ? ' (see the warning above — this is almost certainly the file:// restriction, not your backend)' : ' — if you\'re viewing this over https already, check APPS_SCRIPT_URL is exactly right and the deployment allows "Anyone" access';
+    allOk = setResult('read', false, 'Network/CORS error: ' + e.message + hint) && allOk;
+    finish(false);
+    return;
+  }
+
+  // Step 2: write
+  let writeData;
+  try{
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'set', key:TEST_KEY, value:testValue, token:WRITE_TOKEN, updatedBy:'Connection Test Page' })
+    });
+    writeData = await res.json();
+    allOk = setResult('write', !!(writeData && writeData.ok), JSON.stringify(writeData)) && allOk;
+    if(writeData && writeData.error === 'unauthorized'){
+      setResult('write', false, 'Token rejected — WRITE_TOKEN in your Apps Script does not match "'+WRITE_TOKEN+'". Check Code.gs.');
+    }
+  }catch(e){
+    allOk = setResult('write', false, 'Network/CORS error: ' + e.message) && allOk;
+  }
+
+  // Step 3: read back
+  let readBackData;
+  try{
+    const res = await fetch(APPS_SCRIPT_URL + '?key=' + encodeURIComponent(TEST_KEY));
+    readBackData = await res.json();
+    allOk = setResult('readback', !!(readBackData && readBackData.ok), JSON.stringify(readBackData)) && allOk;
+  }catch(e){
+    allOk = setResult('readback', false, 'Network/CORS error: ' + e.message) && allOk;
+  }
+
+  // Step 4: value matches
+  const matches = readBackData && readBackData.value === testValue;
+  allOk = setResult('match', matches, matches ? ('Got back exactly what we wrote: ' + testValue) : ('Expected "'+testValue+'" but got "'+(readBackData&&readBackData.value)+'"')) && allOk;
+
+  finish(allOk);
+}
+
+function finish(ok){
+  const summary = document.getElementById('summary');
+  summary.style.display = 'block';
+  summary.className = 'summary ' + (ok ? 'pass' : 'fail');
+  summary.textContent = ok
+    ? '✓ Everything works. Your backend is fully connected — reads and writes both succeed. You can go ahead and host the three console files now.'
+    : '✗ Something needs fixing before the consoles will sync. Check the failed step above for the specific reason, and see SETUP_INSTRUCTIONS.md for common causes.';
+}
+
+run();
+</script>
+</body>
+</html>
