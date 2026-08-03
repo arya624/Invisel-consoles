@@ -156,7 +156,7 @@ const DEFAULT_STATE = {
   activeMonth: "2026-08",
   months: {
     "2026-08": {
-      targets: { total: 14000000, shopify: 10000000, marketplace: 4000000 },
+      targets: { total: 14000000, shopify: 10000000, marketplace: 4000000, metaGoogleAdSpendBudget: 3800000, amazonAdSpendBudget: 310000 },
       mtd: { shopifyRevenue: 0, marketplaceRevenue: 0, metaGoogleSpend: 0, amazonAdsSpend: 0 }
     }
   },
@@ -650,16 +650,20 @@ const DEFAULT_OVERHEADS = [
 function ensureMonth(monthKey){
   if(!state.months[monthKey]){
     state.months[monthKey] = {
-      targets: { total: 0, shopify: 0, marketplace: 0 },
+      targets: { total: 0, shopify: 0, marketplace: 0, metaGoogleAdSpendBudget: 0, amazonAdSpendBudget: 0 },
       mtd: { shopifyRevenue: 0, marketplaceRevenue: 0, metaGoogleSpend: 0, amazonAdsSpend: 0, b2bRevenue: 0, b2cRevenue: 0, directIncome: 0 },
-      overheads: JSON.parse(JSON.stringify(DEFAULT_OVERHEADS))
+      overheads: JSON.parse(JSON.stringify(DEFAULT_OVERHEADS)),
+      dailyLog: {}
     };
   }
   const m = state.months[monthKey];
   if(m.mtd.b2bRevenue===undefined) m.mtd.b2bRevenue = 0;
   if(m.mtd.b2cRevenue===undefined) m.mtd.b2cRevenue = 0;
   if(m.mtd.directIncome===undefined) m.mtd.directIncome = 0;
+  if(m.targets.metaGoogleAdSpendBudget===undefined) m.targets.metaGoogleAdSpendBudget = 0;
+  if(m.targets.amazonAdSpendBudget===undefined) m.targets.amazonAdSpendBudget = 0;
   if(!m.overheads) m.overheads = JSON.parse(JSON.stringify(DEFAULT_OVERHEADS));
+  if(!m.dailyLog) m.dailyLog = {};
   return m;
 }
 function el(id){ return document.getElementById(id); }
@@ -670,12 +674,13 @@ function showTab(name){
 }
 
 function onAsOfChange(v){ state.asOfDate = v; queueSave(); renderOverview(); }
-function switchMonth(key){ state.activeMonth = key; ensureMonth(key); queueSave(); renderOverview(); renderIncome(); renderMargin(); }
+function switchMonth(key){ state.activeMonth = key; ensureMonth(key); dailyEntryDay = null; queueSave(); renderOverview(); renderIncome(); renderMargin(); }
 function addNextMonth(){
   const latest = Object.keys(state.months).sort().slice(-1)[0] || state.activeMonth;
   const nk = nextMonthKey(latest);
   ensureMonth(nk);
   state.activeMonth = nk;
+  dailyEntryDay = null;
   queueSave();
   renderOverview();
   renderIncome();
@@ -688,6 +693,95 @@ function addNextMonth(){
 function updateTarget(key, val){ ensureMonth(state.activeMonth).targets[key] = parseFloat(val)||0; queueSave(); withFocusPreserved(renderOverview); }
 function updateMtd(key, val){ ensureMonth(state.activeMonth).mtd[key] = parseFloat(val)||0; queueSave(); withFocusPreserved(()=>{ renderOverview(); renderIncome(); }); }
 function updateAssumption(key, val, isPct){ state.assumptions[key] = isPct ? (parseFloat(val)||0)/100 : (parseFloat(val)||0); queueSave(); withFocusPreserved(()=>{ renderOverview(); renderMargin(); renderIncome(); }); }
+
+/* ---------------------------------------------------------------------
+   DAILY LOG — "yesterday's actuals" entry, rolled into MTD via deltas
+   so all existing MTD-based calculations (Income Statement, CM, etc.)
+   keep working unchanged. Also powers the daily history table + trend
+   chart, and the ERR/RRR/Difference tracker matching Arya's daily sheet.
+--------------------------------------------------------------------- */
+function defaultEntryDay(){
+  const asOf = new Date(state.asOfDate+"T00:00:00");
+  const y = new Date(asOf); y.setDate(y.getDate()-1);
+  const activeMonthKey = state.activeMonth;
+  const [ay,am] = activeMonthKey.split('-').map(Number);
+  // if "yesterday" falls in the active month, use that day-of-month; else default to day 1
+  if(y.getFullYear()===ay && (y.getMonth()+1)===am) return y.getDate();
+  return 1;
+}
+let dailyEntryDay = null; // lazily initialized on first render
+function ensureDailyEntryDay(){
+  if(dailyEntryDay===null) dailyEntryDay = defaultEntryDay();
+  return dailyEntryDay;
+}
+function setDailyEntryDay(val){
+  dailyEntryDay = clamp(parseInt(val)||1, 1, daysInMonthOf(state.activeMonth));
+  renderOverview();
+}
+function getDailyEntryDraft(){
+  const m = ensureMonth(state.activeMonth);
+  const day = ensureDailyEntryDay();
+  const existing = m.dailyLog[day];
+  return existing ? Object.assign({}, existing) : { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+}
+function saveDailyEntry(fields){
+  const m = ensureMonth(state.activeMonth);
+  const day = ensureDailyEntryDay();
+  const prev = m.dailyLog[day] || { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+  const next = {
+    metaSpend: parseFloat(fields.metaSpend)||0,
+    googleSpend: parseFloat(fields.googleSpend)||0,
+    amazonSpend: parseFloat(fields.amazonSpend)||0,
+    websiteRevenue: parseFloat(fields.websiteRevenue)||0,
+    amazonRevenue: parseFloat(fields.amazonRevenue)||0
+  };
+  // Delta-update the existing MTD aggregates so downstream calculations
+  // (Income Statement, CM, discount profitability) stay consistent
+  // without needing to be rewritten around the daily log.
+  m.mtd.shopifyRevenue += (next.websiteRevenue - prev.websiteRevenue);
+  m.mtd.marketplaceRevenue += (next.amazonRevenue - prev.amazonRevenue);
+  m.mtd.metaGoogleSpend += ((next.metaSpend+next.googleSpend) - (prev.metaSpend+prev.googleSpend));
+  m.mtd.amazonAdsSpend += (next.amazonSpend - prev.amazonSpend);
+  m.dailyLog[day] = next;
+  queueSave();
+  renderOverview();
+  renderIncome();
+}
+function deleteDailyEntry(day){
+  const m = ensureMonth(state.activeMonth);
+  const prev = m.dailyLog[day];
+  if(!prev) return;
+  m.mtd.shopifyRevenue -= prev.websiteRevenue;
+  m.mtd.marketplaceRevenue -= prev.amazonRevenue;
+  m.mtd.metaGoogleSpend -= (prev.metaSpend+prev.googleSpend);
+  m.mtd.amazonAdsSpend -= prev.amazonSpend;
+  delete m.dailyLog[day];
+  queueSave();
+  renderOverview();
+  renderIncome();
+}
+/* ERR = current actual daily run rate (MTD / days elapsed so far)
+   RRR = required daily run rate for the remaining days to hit target
+   Diff = RRR - ERR (how much MORE per day is needed vs current pace) */
+function computeErrRrrDiff(mtdVal, targetVal, daysElapsed, daysRemaining){
+  const err = daysElapsed>0 ? mtdVal/daysElapsed : 0;
+  const rrr = daysRemaining>0 ? Math.max(targetVal-mtdVal,0)/daysRemaining : Math.max(targetVal-mtdVal,0);
+  return { err, rrr, diff: rrr-err };
+}
+function sumDailyLog(monthKey){
+  const m = ensureMonth(monthKey);
+  const sums = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+  Object.keys(m.dailyLog).forEach(dayStr=>{
+    const e = m.dailyLog[dayStr];
+    sums.metaSpend += e.metaSpend||0;
+    sums.googleSpend += e.googleSpend||0;
+    sums.amazonSpend += e.amazonSpend||0;
+    sums.websiteRevenue += e.websiteRevenue||0;
+    sums.amazonRevenue += e.amazonRevenue||0;
+  });
+  return sums;
+}
+
 function addOverheadRow(){
   ensureMonth(state.activeMonth).overheads.push({ name:"New expense", category:"Operating", amount:0 });
   queueSave();
@@ -825,15 +919,130 @@ function renderOverview(){
       <div class="card"><label class="field">Total Target (₹)</label><input type="number" value="${m.targets.total}" data-fid="target-total" oninput="updateTarget('total', this.value)"/><div class="hint">${inrLakh(m.targets.total)}</div></div>
       <div class="card"><label class="field">Shopify (Website) Target (₹)</label><input type="number" value="${m.targets.shopify}" data-fid="target-shopify" oninput="updateTarget('shopify', this.value)"/><div class="hint">${inrLakh(m.targets.shopify)}</div></div>
       <div class="card"><label class="field">Marketplace Target — Amazon/Flipkart (₹)</label><input type="number" value="${m.targets.marketplace}" data-fid="target-marketplace" oninput="updateTarget('marketplace', this.value)"/><div class="hint">${inrLakh(m.targets.marketplace)}</div></div>
+      <div class="card"><label class="field">Meta+Google Ad Spend Budget (₹)</label><input type="number" value="${m.targets.metaGoogleAdSpendBudget||0}" data-fid="target-metaGoogleAdSpendBudget" oninput="updateTarget('metaGoogleAdSpendBudget', this.value)"/><div class="hint">${inrLakh(m.targets.metaGoogleAdSpendBudget||0)}</div></div>
+      <div class="card"><label class="field">Amazon Ad Spend Budget (₹)</label><input type="number" value="${m.targets.amazonAdSpendBudget||0}" data-fid="target-amazonAdSpendBudget" oninput="updateTarget('amazonAdSpendBudget', this.value)"/><div class="hint">${inrLakh(m.targets.amazonAdSpendBudget||0)}</div></div>
     </div>
 
-    <div class="section-title">${status==='past'?'Final Actuals':'Month-to-Date Actuals'} <span class="n">editable</span></div>
+    <div class="section-title">${status==='past'?'Final Actuals':'Month-to-Date Actuals'} <span class="n">computed from daily entries below</span></div>
     <div class="grid grid-4">
-      <div class="card"><label class="field">Revenue — Shopify (₹)</label><input type="number" value="${m.mtd.shopifyRevenue}" data-fid="mtd-shopifyRevenue" oninput="updateMtd('shopifyRevenue', this.value)"/></div>
-      <div class="card"><label class="field">Revenue — Marketplace (₹)</label><input type="number" value="${m.mtd.marketplaceRevenue}" data-fid="mtd-marketplaceRevenue" oninput="updateMtd('marketplaceRevenue', this.value)"/></div>
-      <div class="card"><label class="field">Ad Spend — Meta &amp; Google (₹)</label><input type="number" value="${m.mtd.metaGoogleSpend}" data-fid="mtd-metaGoogleSpend" oninput="updateMtd('metaGoogleSpend', this.value)"/></div>
-      <div class="card"><label class="field">Ad Spend — Amazon Ads (₹)</label><input type="number" value="${m.mtd.amazonAdsSpend}" data-fid="mtd-amazonAdsSpend" oninput="updateMtd('amazonAdsSpend', this.value)"/></div>
+      <div class="card"><label class="field">Revenue — Shopify (₹)</label><div class="mono" style="font-size:16px;padding:8px 0;">${inr(m.mtd.shopifyRevenue)}</div></div>
+      <div class="card"><label class="field">Revenue — Marketplace (₹)</label><div class="mono" style="font-size:16px;padding:8px 0;">${inr(m.mtd.marketplaceRevenue)}</div></div>
+      <div class="card"><label class="field">Ad Spend — Meta &amp; Google (₹)</label><div class="mono" style="font-size:16px;padding:8px 0;">${inr(m.mtd.metaGoogleSpend)}</div></div>
+      <div class="card"><label class="field">Ad Spend — Amazon Ads (₹)</label><div class="mono" style="font-size:16px;padding:8px 0;">${inr(m.mtd.amazonAdsSpend)}</div></div>
     </div>
+    <div class="hint" style="margin-top:6px;">These no longer take direct input — enter each day's numbers below and MTD rolls up automatically.</div>
+
+    ${(function(){
+      const entryDayNum = ensureDailyEntryDay();
+      const draft = getDailyEntryDraft();
+      const dayOptions = Array.from({length:totalDays},(_,i)=>i+1).map(d=>`<option value="${d}" ${d===entryDayNum?'selected':''}>${monthLabel(activeKey).split(' ')[0]} ${d}${m.dailyLog[d]?' — logged':''}</option>`).join('');
+      const mtdSums = sumDailyLog(activeKey);
+      const dayEntry = m.dailyLog[entryDayNum] || {metaSpend:0,googleSpend:0,amazonSpend:0,websiteRevenue:0,amazonRevenue:0};
+
+      const websiteRoasYesterday = (dayEntry.metaSpend+dayEntry.googleSpend)>0 ? dayEntry.websiteRevenue/(dayEntry.metaSpend+dayEntry.googleSpend) : 0;
+      const websiteRoasMtd = (mtdSums.metaSpend+mtdSums.googleSpend)>0 ? mtdSums.websiteRevenue/(mtdSums.metaSpend+mtdSums.googleSpend) : 0;
+      const websiteRoasTarget = m.targets.metaGoogleAdSpendBudget>0 ? m.targets.shopify/m.targets.metaGoogleAdSpendBudget : 0;
+      const amazonRoasYesterday = dayEntry.amazonSpend>0 ? dayEntry.amazonRevenue/dayEntry.amazonSpend : 0;
+      const amazonRoasMtd = mtdSums.amazonSpend>0 ? mtdSums.amazonRevenue/mtdSums.amazonSpend : 0;
+      const amazonRoasTarget = m.targets.amazonAdSpendBudget>0 ? m.targets.marketplace/m.targets.amazonAdSpendBudget : 0;
+      const totalSpendYesterday = dayEntry.metaSpend+dayEntry.googleSpend+dayEntry.amazonSpend;
+      const totalSpendMtd = mtdSums.metaSpend+mtdSums.googleSpend+mtdSums.amazonSpend;
+      const totalSpendTarget = (m.targets.metaGoogleAdSpendBudget||0)+(m.targets.amazonAdSpendBudget||0);
+      const totalRevenueYesterday = dayEntry.websiteRevenue+dayEntry.amazonRevenue;
+      const totalRevenueMtd = mtdSums.websiteRevenue+mtdSums.amazonRevenue;
+      const blendedRoasYesterday = totalSpendYesterday>0? totalRevenueYesterday/totalSpendYesterday:0;
+      const blendedRoasMtd = totalSpendMtd>0? totalRevenueMtd/totalSpendMtd:0;
+      const blendedRoasTarget = totalSpendTarget>0? m.targets.total/totalSpendTarget:0;
+
+      function trow(label, y, mtdVal, targetVal, isRoas){
+        if(isRoas){
+          return `<tr><td><b>${label}</b></td><td class="num">${y.toFixed(2)}</td><td class="num">${mtdVal.toFixed(2)}</td><td class="num">${targetVal?targetVal.toFixed(2):'—'}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>`;
+        }
+        const {err,rrr,diff} = computeErrRrrDiff(mtdVal, targetVal||0, daysElapsed, daysRemaining);
+        return `<tr><td><b>${label}</b></td><td class="num">${inr(y)}</td><td class="num">${inr(mtdVal)}</td><td class="num">${inr(targetVal)}</td><td class="num">${inr(err)}</td><td class="num">${inr(rrr)}</td><td class="num" style="color:${diff>0?'var(--danger)':'var(--good)'}">${inr(diff)}</td></tr>`;
+      }
+
+      const logDays = Object.keys(m.dailyLog).map(Number).sort((a,b)=>a-b);
+      const historyRows = logDays.map(day=>{
+        const e = m.dailyLog[day];
+        const totalRev = e.websiteRevenue+e.amazonRevenue;
+        return `<tr>
+          <td>${monthLabel(activeKey).split(' ')[0]} ${day}</td>
+          <td class="num">${inr(e.metaSpend)}</td>
+          <td class="num">${inr(e.googleSpend)}</td>
+          <td class="num">${inr(e.websiteRevenue)}</td>
+          <td class="num">${inr(e.amazonSpend)}</td>
+          <td class="num">${inr(e.amazonRevenue)}</td>
+          <td class="num"><b>${inr(totalRev)}</b></td>
+          <td><button class="btn ghost small" onclick="setDailyEntryDay(${day})">edit</button> <button class="btn ghost small" onclick="deleteDailyEntry(${day})">delete</button></td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="8" class="hint">No daily entries logged yet for ${monthLabel(activeKey)}.</td></tr>`;
+
+      function trendChart(){
+        if(logDays.length===0) return '<div class="hint">No data yet to chart — log a few days below.</div>';
+        const values = logDays.map(day=> m.dailyLog[day].websiteRevenue + m.dailyLog[day].amazonRevenue);
+        const max = Math.max(...values, 1);
+        const w = 700, h = 170, padding = 26;
+        const slot = (w-padding*2)/logDays.length;
+        const barWidth = Math.max(slot*0.6, 3);
+        let bars = '';
+        logDays.forEach((day,i)=>{
+          const val = values[i];
+          const barH = (val/max)*(h-padding*2);
+          const x = padding + i*slot + (slot-barWidth)/2;
+          const y = h-padding-barH;
+          bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(barH,1).toFixed(1)}" fill="#0C8C82" rx="2"><title>Day ${day}: ${inr(val)}</title></rect>`;
+          if(logDays.length<=20) bars += `<text x="${(x+barWidth/2).toFixed(1)}" y="${h-8}" font-size="9" fill="#57626C" text-anchor="middle">${day}</text>`;
+        });
+        return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:170px;">${bars}<line x1="${padding}" y1="${h-padding}" x2="${w-padding}" y2="${h-padding}" stroke="#DBE2DF" /></svg>`;
+      }
+
+      return `
+        <div class="section-title">Log Yesterday's Actuals <span class="n">day ${entryDayNum} of ${monthLabel(activeKey)}</span></div>
+        <div class="card">
+          <label class="field">Which day is this for?</label>
+          <select onchange="setDailyEntryDay(this.value)" style="width:auto;min-width:220px;">${dayOptions}</select>
+          <div class="grid grid-4" style="margin-top:12px;">
+            <div><label class="field">Meta Spend (₹)</label><input type="number" id="entry-meta" value="${draft.metaSpend}"/></div>
+            <div><label class="field">Google Spend (₹)</label><input type="number" id="entry-google" value="${draft.googleSpend}"/></div>
+            <div><label class="field">Website Revenue (₹)</label><input type="number" id="entry-webrev" value="${draft.websiteRevenue}"/></div>
+            <div><label class="field">Amazon Spend (₹)</label><input type="number" id="entry-amzspend" value="${draft.amazonSpend}"/></div>
+            <div><label class="field">Amazon Revenue (₹)</label><input type="number" id="entry-amzrev" value="${draft.amazonRevenue}"/></div>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:8px;">
+            <button class="btn small" onclick="saveDailyEntry({metaSpend:el('entry-meta').value, googleSpend:el('entry-google').value, websiteRevenue:el('entry-webrev').value, amazonSpend:el('entry-amzspend').value, amazonRevenue:el('entry-amzrev').value})">Save Day</button>
+            ${m.dailyLog[entryDayNum] ? `<button class="btn ghost small" onclick="deleteDailyEntry(${entryDayNum})">Delete This Day</button>` : ''}
+          </div>
+        </div>
+
+        <div class="section-title">Daily Performance Tracker <span class="n">Yesterday · MTD · Target · ERR · RRR · Difference</span></div>
+        <div class="assumption-note">ERR = current daily run rate (MTD ÷ days elapsed). RRR = required daily run rate for the ${daysRemaining} remaining days to hit target. Difference = RRR − ERR.</div>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Metric</th><th class="num">Yesterday</th><th class="num">MTD</th><th class="num">Target/Budget</th><th class="num">ERR</th><th class="num">RRR</th><th class="num">Difference</th></tr></thead>
+          <tbody>
+            ${trow('Meta Ads', dayEntry.metaSpend, mtdSums.metaSpend, m.targets.metaGoogleAdSpendBudget)}
+            ${trow('Google Ads', dayEntry.googleSpend, mtdSums.googleSpend, m.targets.metaGoogleAdSpendBudget)}
+            ${trow('Website Revenue', dayEntry.websiteRevenue, mtdSums.websiteRevenue, m.targets.shopify)}
+            ${trow('Website ROAS', websiteRoasYesterday, websiteRoasMtd, websiteRoasTarget, true)}
+            ${trow('Amazon Ads', dayEntry.amazonSpend, mtdSums.amazonSpend, m.targets.amazonAdSpendBudget)}
+            ${trow('Amazon Revenue', dayEntry.amazonRevenue, mtdSums.amazonRevenue, m.targets.marketplace)}
+            ${trow('Amazon ROAS', amazonRoasYesterday, amazonRoasMtd, amazonRoasTarget, true)}
+            ${trow('Total Spends', totalSpendYesterday, totalSpendMtd, totalSpendTarget)}
+            ${trow('Total Revenue', totalRevenueYesterday, totalRevenueMtd, m.targets.total)}
+            ${trow('Blended ROAS', blendedRoasYesterday, blendedRoasMtd, blendedRoasTarget, true)}
+          </tbody>
+        </table></div>
+
+        <div class="section-title">Revenue Trend This Month</div>
+        <div class="card">${trendChart()}</div>
+
+        <div class="section-title">Daily History <span class="n">${logDays.length} day${logDays.length===1?'':'s'} logged</span></div>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Date</th><th class="num">Meta Spend</th><th class="num">Google Spend</th><th class="num">Website Rev</th><th class="num">Amazon Spend</th><th class="num">Amazon Rev</th><th class="num">Total Rev</th><th></th></tr></thead>
+          <tbody>${historyRows}</tbody>
+        </table></div>
+      `;
+    })()}
 
     <div class="section-title">Pace &amp; Projection <span class="n">Day ${daysElapsed} of ${totalDays} · ${daysRemaining} days left</span></div>
     <div class="grid grid-4">
