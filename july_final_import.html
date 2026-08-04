@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Invisel — Import Complete July Data</title>
+<style>
+  body{font-family:'IBM Plex Mono',monospace;background:#0F1419;color:#E6EDEA;padding:30px;max-width:780px;margin:0 auto;}
+  h1{font-family:sans-serif;font-size:20px;color:#fff;}
+  p{font-family:sans-serif;font-size:13.5px;color:#B7C2C7;line-height:1.6;}
+  table{width:100%;border-collapse:collapse;font-size:11.5px;margin:16px 0;}
+  th,td{padding:5px 7px;border-bottom:1px solid #2A343A;text-align:right;}
+  th:first-child,td:first-child{text-align:left;}
+  th{color:#8A9AA3;font-weight:600;text-transform:uppercase;font-size:10px;}
+  .btn{background:#0C8C82;color:#fff;border:none;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:sans-serif;}
+  .btn:hover{background:#075E57;}
+  .btn:disabled{background:#3A444A;cursor:not-allowed;}
+  #status{margin-top:16px;padding:14px 16px;border-radius:8px;font-family:sans-serif;font-size:13.5px;display:none;white-space:pre-wrap;}
+  .status-ok{background:#123324;border:1px solid #3ED598;color:#3ED598;}
+  .status-err{background:#3A1A1A;border:1px solid #FF6B6B;color:#FF6B6B;}
+  .status-progress{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;}
+  .warn{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13.5px;line-height:1.6;}
+</style>
+</head>
+<body>
+<h1>Import Complete July 2026 Data</h1>
+<p>This is the clean, complete file — all 31 days, all 5 fields each, every row validated against the file's own Total Ad Spend and Combined Sales columns with zero mismatches. This <b>fully replaces</b> July's daily log with these values (not a delta patch), so it's safe to run regardless of what's already there from the earlier partial imports.</p>
+
+<div id="protocolWarning" style="display:none;background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;border-radius:8px;padding:16px;margin-bottom:16px;font-family:sans-serif;font-size:13.5px;line-height:1.5;"></div>
+
+<table>
+  <thead><tr><th>Day</th><th>Meta</th><th>Google</th><th>Amazon Spend</th><th>Website Rev</th><th>Amazon Rev</th></tr></thead>
+  <tbody id="preview"></tbody>
+</table>
+
+<button class="btn" id="importBtn" onclick="runImport()">Import Complete July Data (Replaces Existing)</button>
+<div id="status"></div>
+
+<script>
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx7Iu7XJlvEQGQRfS8gBzleETxvCeqAHtVMRty0hIHy9IKtiLo9gxP9-sGN1Xw6Gymr/exec";
+const WRITE_TOKEN = "invisel-2026-9x7q2m";
+
+const JULY_ENTRIES = {"1": {"metaSpend": 239303.51, "googleSpend": 5500.0, "amazonSpend": 6603.89, "websiteRevenue": 367286.2, "amazonRevenue": 87199.95}, "2": {"metaSpend": 183079.71, "googleSpend": 5500.0, "amazonSpend": 7981.01, "websiteRevenue": 244816.5, "amazonRevenue": 113753.5}, "3": {"metaSpend": 134702.82, "googleSpend": 5500.0, "amazonSpend": 8255.93, "websiteRevenue": 217406.1, "amazonRevenue": 103638.7}, "4": {"metaSpend": 155751.77, "googleSpend": 5500.0, "amazonSpend": 11606.15, "websiteRevenue": 253067.3, "amazonRevenue": 162189.0}, "5": {"metaSpend": 137609.15, "googleSpend": 5500.0, "amazonSpend": 13064.22, "websiteRevenue": 236173.3, "amazonRevenue": 148784.45}, "6": {"metaSpend": 158707.57, "googleSpend": 5500.0, "amazonSpend": 11870.22, "websiteRevenue": 267998.1, "amazonRevenue": 180549.55}, "7": {"metaSpend": 161595.85, "googleSpend": 5500.0, "amazonSpend": 9719.56, "websiteRevenue": 223907.1, "amazonRevenue": 103288.8}, "8": {"metaSpend": 126452.37, "googleSpend": 4500.0, "amazonSpend": 9789.29, "websiteRevenue": 191049.2, "amazonRevenue": 111196.1}, "9": {"metaSpend": 127052.91, "googleSpend": 4500.0, "amazonSpend": 11093.98, "websiteRevenue": 188916.0, "amazonRevenue": 94838.05}, "10": {"metaSpend": 130255.19, "googleSpend": 4500.0, "amazonSpend": 8697.67, "websiteRevenue": 226545.2, "amazonRevenue": 77386.6}, "11": {"metaSpend": 150335.88, "googleSpend": 4500.0, "amazonSpend": 12253.56, "websiteRevenue": 269363.5, "amazonRevenue": 92629.05}, "12": {"metaSpend": 144068.99, "googleSpend": 4500.0, "amazonSpend": 12468.4, "websiteRevenue": 219851.1, "amazonRevenue": 84597.0}, "13": {"metaSpend": 117963.67, "googleSpend": 4500.0, "amazonSpend": 9703.49, "websiteRevenue": 169367.1, "amazonRevenue": 104034.25}, "14": {"metaSpend": 103559.28, "googleSpend": 4500.0, "amazonSpend": 13275.73, "websiteRevenue": 142395.0, "amazonRevenue": 88287.6}, "15": {"metaSpend": 130892.22, "googleSpend": 4500.0, "amazonSpend": 10799.04, "websiteRevenue": 216196.0, "amazonRevenue": 93749.2}, "16": {"metaSpend": 172081.65, "googleSpend": 2500.0, "amazonSpend": 7530.93, "websiteRevenue": 249512.0, "amazonRevenue": 98876.2}, "17": {"metaSpend": 53033.05, "googleSpend": 2500.0, "amazonSpend": 8343.91, "websiteRevenue": 100234.0, "amazonRevenue": 71633.8}, "18": {"metaSpend": 36312.15, "googleSpend": 2500.0, "amazonSpend": 7586.0, "websiteRevenue": 96919.0, "amazonRevenue": 62152.05}, "19": {"metaSpend": 39596.28, "googleSpend": 2500.0, "amazonSpend": 9423.61, "websiteRevenue": 91479.1, "amazonRevenue": 77218.6}, "20": {"metaSpend": 39388.58, "googleSpend": 2500.0, "amazonSpend": 7211.34, "websiteRevenue": 82918.14, "amazonRevenue": 57939.2}, "21": {"metaSpend": 46262.53, "googleSpend": 2500.0, "amazonSpend": 8158.73, "websiteRevenue": 85120.67, "amazonRevenue": 71354.2}, "22": {"metaSpend": 0.0, "googleSpend": 2500.0, "amazonSpend": 5632.95, "websiteRevenue": 28383.0, "amazonRevenue": 57951.0}, "23": {"metaSpend": 20671.04, "googleSpend": 12631.29, "amazonSpend": 4470.92, "websiteRevenue": 62261.0, "amazonRevenue": 45096.0}, "24": {"metaSpend": 54701.25, "googleSpend": 8403.54, "amazonSpend": 7142.67, "websiteRevenue": 105775.0, "amazonRevenue": 42047.0}, "25": {"metaSpend": 95690.71, "googleSpend": 0.0, "amazonSpend": 7567.0, "websiteRevenue": 156099.0, "amazonRevenue": 64140.0}, "26": {"metaSpend": 135968.95, "googleSpend": 0.0, "amazonSpend": 9334.03, "websiteRevenue": 200137.12, "amazonRevenue": 86685.0}, "27": {"metaSpend": 148402.55, "googleSpend": 0.0, "amazonSpend": 7729.65, "websiteRevenue": 242721.0, "amazonRevenue": 79801.0}, "28": {"metaSpend": 123326.01, "googleSpend": 0.0, "amazonSpend": 6694.6, "websiteRevenue": 146639.0, "amazonRevenue": 76168.0}, "29": {"metaSpend": 88404.31, "googleSpend": 2182.63, "amazonSpend": 7165.65, "websiteRevenue": 130522.1, "amazonRevenue": 74274.0}, "30": {"metaSpend": 87871.78, "googleSpend": 3782.81, "amazonSpend": 9058.65, "websiteRevenue": 130555.6, "amazonRevenue": 75803.0}, "31": {"metaSpend": 94226.06, "googleSpend": 3233.55, "amazonSpend": 8073.0, "websiteRevenue": 143431.7, "amazonRevenue": 85221.0}};
+
+const isFileProtocol = window.location.protocol === 'file:';
+if(isFileProtocol){
+  const warn = document.getElementById('protocolWarning');
+  warn.style.display = 'block';
+  warn.innerHTML = '<b>You appear to have opened this file directly (file://).</b> Browsers block a local file from calling your Apps Script URL. Upload this to your GitHub repo and open it from <code>https://arya624.github.io/Invisel-consoles/july_final_import.html</code> instead.';
+}
+
+function inr(n){ return "Rs " + Math.round(n).toLocaleString('en-IN'); }
+
+const tbody = document.getElementById('preview');
+Object.keys(JULY_ENTRIES).map(Number).sort((a,b)=>a-b).forEach(function(day){
+  const e = JULY_ENTRIES[day];
+  const tr = document.createElement('tr');
+  tr.innerHTML = "<td>Jul " + day + "</td><td>" + inr(e.metaSpend) + "</td><td>" + inr(e.googleSpend) + "</td><td>" + inr(e.amazonSpend) + "</td><td>" + inr(e.websiteRevenue) + "</td><td>" + inr(e.amazonRevenue) + "</td>";
+  tbody.appendChild(tr);
+});
+
+async function runImport(){
+  const btn = document.getElementById('importBtn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.style.display = 'block';
+  status.className = 'status-progress';
+  status.textContent = 'Fetching current live state...';
+
+  try{
+    const res = await fetch(APPS_SCRIPT_URL + '?key=invisel-console-state');
+    const data = await res.json();
+    let state = (data && data.value) ? JSON.parse(data.value) : null;
+    if(!state){ throw new Error('Could not read current state from backend.'); }
+
+    if(!state.months) state.months = {};
+    if(!state.months['2026-07']){
+      state.months['2026-07'] = {
+        targets: { total: 0, shopify: 0, marketplace: 0, metaGoogleAdSpendBudget: 0, amazonAdSpendBudget: 0 },
+        mtd: { shopifyRevenue: 0, marketplaceRevenue: 0, metaGoogleSpend: 0, amazonAdsSpend: 0, b2bRevenue: 0, b2cRevenue: 0, directIncome: 0 },
+        overheads: [],
+        dailyLog: {}
+      };
+    }
+    const m = state.months['2026-07'];
+    if(!m.targets) m.targets = { total: 0, shopify: 0, marketplace: 0, metaGoogleAdSpendBudget: 0, amazonAdSpendBudget: 0 };
+    if(!m.mtd) m.mtd = { shopifyRevenue: 0, marketplaceRevenue: 0, metaGoogleSpend: 0, amazonAdsSpend: 0, b2bRevenue: 0, b2cRevenue: 0, directIncome: 0 };
+
+    status.textContent = 'Replacing July daily log with the complete, validated dataset...';
+
+    // Full replace, not a merge/patch - this file is the complete, clean source of truth for July
+    m.dailyLog = JSON.parse(JSON.stringify(JULY_ENTRIES));
+
+    let sums = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+    Object.values(m.dailyLog).forEach(function(e){
+      sums.metaSpend += e.metaSpend||0;
+      sums.googleSpend += e.googleSpend||0;
+      sums.amazonSpend += e.amazonSpend||0;
+      sums.websiteRevenue += e.websiteRevenue||0;
+      sums.amazonRevenue += e.amazonRevenue||0;
+    });
+    m.mtd.shopifyRevenue = sums.websiteRevenue;
+    m.mtd.marketplaceRevenue = sums.amazonRevenue;
+    m.mtd.metaGoogleSpend = sums.metaSpend + sums.googleSpend;
+    m.mtd.amazonAdsSpend = sums.amazonSpend;
+
+    state.lastSavedAt = new Date().toISOString();
+    state.lastSavedBy = 'July Complete Data Import';
+
+    status.textContent = 'Writing to the backend...';
+    const writeRes = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'set', key:'invisel-console-state', value: JSON.stringify(state), token: WRITE_TOKEN, updatedBy: 'July Complete Data Import' })
+    });
+    const writeData = await writeRes.json();
+    if(!writeData.ok){ throw new Error('Write rejected: ' + JSON.stringify(writeData)); }
+
+    status.className = 'status-ok';
+    status.textContent = 'Success. July 2026 is now complete: 31 of 31 days.\n\n'
+      + 'Final MTD totals:\n'
+      + 'Website Revenue: ' + inr(m.mtd.shopifyRevenue) + '\n'
+      + 'Amazon Revenue: ' + inr(m.mtd.marketplaceRevenue) + '\n'
+      + 'Meta+Google Spend: ' + inr(m.mtd.metaGoogleSpend) + '\n'
+      + 'Amazon Spend: ' + inr(m.mtd.amazonAdsSpend) + '\n\n'
+      + 'August and everything else were untouched. Open the Growth console and switch to July 2026 to see it.';
+  }catch(e){
+    const hint = isFileProtocol ? ' (see the warning above)' : '';
+    status.className = 'status-err';
+    status.textContent = 'Import failed: ' + e.message + hint + '\n\nSafe to retry.';
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
