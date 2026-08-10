@@ -499,6 +499,9 @@ function renderOverview(){
   const { totalDays, daysElapsed, daysRemaining, status } = dayInfo;
 
   const targetSumMismatch = Math.abs((m.targets.shopify+m.targets.marketplace) - m.targets.total) > 1;
+  const mtdSumsForCheck = sumDailyLog(activeKey);
+  const hasLoggedData = Object.keys(m.dailyLog).length > 0 || mtdSumsForCheck.websiteRevenue>0 || mtdSumsForCheck.amazonRevenue>0;
+  const asOfDateMismatch = status==='future' && hasLoggedData;
 
   function statusBadge(proj, target){
     if(!target) return '<span class="badge warn">no target set</span>';
@@ -535,6 +538,7 @@ function renderOverview(){
     </div>
 
     ${targetSumMismatch? `<div class="assumption-note"><b>Heads up:</b> Shopify target + Marketplace target doesn't add up to the Total target for ${monthLabel(activeKey)}.</div>` : ''}
+    ${asOfDateMismatch? `<div class="assumption-note" style="border-color:var(--danger);background:var(--danger-soft);color:var(--danger);"><b>ERR will show ₹0 below — here's why:</b> this month has real data logged, but the "As of" date at the top of the page (currently ${state.asOfDate}) is set to a date before ${monthLabel(activeKey)} starts. The app treats the month as not-yet-started, so days elapsed = 0 and ERR (which divides by days elapsed) comes out to zero. <b>Fix:</b> update the "As of" date field above to today's actual date.</div>` : ''}
 
     <div class="section-title">${monthLabel(activeKey)} Targets <span class="n">editable</span></div>
     <div class="grid grid-3">
