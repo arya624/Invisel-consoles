@@ -437,6 +437,91 @@ function deleteDailyEntry(day){
   queueSave();
   renderOverview();
 }
+
+/* ---------------------------------------------------------------------
+   BULK IMPORT - paste many days of one field at once (from Excel,
+   Sheets, or any ad/marketplace report), with a preview before
+   committing. Handles common date formats and Rupee/comma formatting.
+--------------------------------------------------------------------- */
+const BULK_FIELD_LABELS = { websiteRevenue:'Website Revenue', amazonRevenue:'Amazon Revenue', metaSpend:'Meta Spend', googleSpend:'Google Spend', amazonSpend:'Amazon Spend' };
+let bulkImportField = 'websiteRevenue';
+let bulkImportParsed = [];
+
+function parseBulkAmount(s){
+  if(s===undefined || s===null) return null;
+  s = String(s).trim().replace(/^[₹~]+/,'').replace(/\*/g,'').replace(/,/g,'').trim();
+  if(s==='' || s==='-' || s==='–' || s==='NA' || s==='N/A') return 0;
+  const v = parseFloat(s);
+  return isNaN(v) ? null : v;
+}
+function extractDayFromDateString(dateStr){
+  dateStr = dateStr.trim();
+  const monthNames = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  let m;
+  m = dateStr.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m) return parseInt(m[3]);
+  m = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if(m) return parseInt(m[1]);
+  m = dateStr.match(/^([A-Za-z]{3,})\s+(\d{1,2})/);
+  if(m && monthNames.indexOf(m[1].toLowerCase().slice(0,3))>=0) return parseInt(m[2]);
+  m = dateStr.match(/^(\d{1,2})\s+([A-Za-z]{3,})/);
+  if(m && monthNames.indexOf(m[2].toLowerCase().slice(0,3))>=0) return parseInt(m[1]);
+  m = dateStr.match(/([1-9]|[12]\d|3[01])/);
+  if(m) return parseInt(m[1]);
+  return null;
+}
+function parseBulkLine(line){
+  line = line.trim();
+  if(!line) return null;
+  let parts = line.split('	');
+  if(parts.length < 2) parts = line.split(',');
+  if(parts.length < 2) parts = line.split(/\s{2,}/);
+  if(parts.length < 2){
+    const m = line.match(/^(.*\S)\s+([₹~]?[\d,]+\.?\d*)$/);
+    if(m) parts = [m[1], m[2]];
+  }
+  if(parts.length < 2) return { raw: line, error: 'could not split into a date and an amount' };
+
+  const datePart = parts[0].trim();
+  const valuePart = parts.slice(1).join(' ').trim();
+  const day = extractDayFromDateString(datePart);
+  const value = parseBulkAmount(valuePart);
+
+  if(day===null) return { raw: line, error: 'could not read a date from "'+datePart+'"' };
+  if(day<1 || day>31) return { raw: line, error: 'day '+day+' is out of range' };
+  if(value===null) return { raw: line, error: 'could not read an amount from "'+valuePart+'"' };
+  return { day, value, raw: line };
+}
+function setBulkImportField(val){ bulkImportField = val; bulkImportParsed = []; renderOverview(); }
+function parseBulkText(){
+  const text = el('bulkImportText') ? el('bulkImportText').value : '';
+  bulkImportParsed = text.split('\n').map(parseBulkLine).filter(function(x){ return x!==null; });
+  renderOverview();
+}
+function applyBulkImport(){
+  const m = ensureMonth(state.activeMonth);
+  const valid = bulkImportParsed.filter(function(p){ return !p.error; });
+  valid.forEach(function(p){
+    if(!m.dailyLog[p.day]) m.dailyLog[p.day] = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+    m.dailyLog[p.day][bulkImportField] = p.value;
+  });
+  let sums = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+  Object.values(m.dailyLog).forEach(function(e){
+    sums.metaSpend += e.metaSpend||0;
+    sums.googleSpend += e.googleSpend||0;
+    sums.amazonSpend += e.amazonSpend||0;
+    sums.websiteRevenue += e.websiteRevenue||0;
+    sums.amazonRevenue += e.amazonRevenue||0;
+  });
+  m.mtd.shopifyRevenue = sums.websiteRevenue;
+  m.mtd.marketplaceRevenue = sums.amazonRevenue;
+  m.mtd.metaGoogleSpend = sums.metaSpend + sums.googleSpend;
+  m.mtd.amazonAdsSpend = sums.amazonSpend;
+  queueSave();
+  bulkImportParsed = [];
+  renderOverview();
+}
+
 function computeErrRrrDiff(mtdVal, targetVal, daysElapsed, daysRemaining){
   const err = daysElapsed>0 ? mtdVal/daysElapsed : 0;
   const rrr = daysRemaining>0 ? Math.max(targetVal-mtdVal,0)/daysRemaining : Math.max(targetVal-mtdVal,0);
@@ -638,6 +723,40 @@ function renderOverview(){
           <div style="margin-top:12px;display:flex;gap:8px;">
             <button class="btn small" onclick="saveDailyEntry({metaSpend:el('entry-meta').value, googleSpend:el('entry-google').value, websiteRevenue:el('entry-webrev').value, amazonSpend:el('entry-amzspend').value, amazonRevenue:el('entry-amzrev').value})">Save Day</button>
             ${m.dailyLog[entryDayNum] ? `<button class="btn ghost small" onclick="deleteDailyEntry(${entryDayNum})">Delete This Day</button>` : ''}
+          </div>
+        </div>
+
+        <div class="section-title">Bulk Import <span class="n">paste many days at once — Excel, Sheets, or any report export</span></div>
+        <div class="card">
+          <label class="field">Which field is this data for?</label>
+          <select onchange="setBulkImportField(this.value)" style="width:auto;min-width:220px;">
+            ${Object.keys(BULK_FIELD_LABELS).map(k=>`<option value="${k}" ${bulkImportField===k?'selected':''}>${BULK_FIELD_LABELS[k]}</option>`).join('')}
+          </select>
+          <div class="hint" style="margin-top:6px;">One day per line: a date, then the amount. Handles "Aug 1", "1 August 2026", "2026-08-01", tab or comma separated, with or without ₹ and commas. Applies to ${monthLabel(activeKey)} (the month selected above).</div>
+          <textarea id="bulkImportText" rows="8" style="width:100%;margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;padding:8px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--ink);" placeholder="Aug 1	173614
+Aug 2	60615
+Aug 3	55334"></textarea>
+          <button class="btn small" style="margin-top:8px;" onclick="parseBulkText()">Preview</button>
+          <div id="bulkImportPreview" style="margin-top:12px;">
+            ${(function(){
+              if(bulkImportParsed.length===0) return '';
+              const errors = bulkImportParsed.filter(p=>p.error);
+              const valid = bulkImportParsed.filter(p=>!p.error);
+              let out = '';
+              if(errors.length){
+                out += `<div class="assumption-note" style="border-color:var(--danger);background:var(--danger-soft);color:var(--danger);"><b>${errors.length} line${errors.length===1?'':'s'} could not be read:</b><br/>${errors.map(e=>e.raw+' — '+e.error).join('<br/>')}</div>`;
+              }
+              if(valid.length){
+                const rows = valid.map(p=>{
+                  const current = (m.dailyLog[p.day] && m.dailyLog[p.day][bulkImportField]) || 0;
+                  const differs = Math.abs(current-p.value) > 0.5;
+                  return `<tr><td>${monthLabel(activeKey).split(' ')[0]} ${p.day}</td><td class="num">${inr(current)}</td><td class="num" style="${differs?'color:var(--warn);font-weight:600;':''}">${inr(p.value)}</td></tr>`;
+                }).join('');
+                out += `<div class="tablewrap"><table><thead><tr><th>Day</th><th class="num">Current ${BULK_FIELD_LABELS[bulkImportField]}</th><th class="num">New Value</th></tr></thead><tbody>${rows}</tbody></table></div>
+                <button class="btn small" style="margin-top:8px;" onclick="applyBulkImport()">Apply ${valid.length} Day${valid.length===1?'':'s'} to ${BULK_FIELD_LABELS[bulkImportField]}</button>`;
+              }
+              return out;
+            })()}
           </div>
         </div>
 
