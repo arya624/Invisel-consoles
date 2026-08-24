@@ -623,6 +623,15 @@ function monthLabel(monthKey){
   const [y,m] = monthKey.split('-').map(Number);
   return new Date(y, m-1, 1).toLocaleDateString('en-IN', {month:'long', year:'numeric'});
 }
+function trueYesterdayInfo(activeMonthKey, asOfDateStr){
+  const asOf = new Date(asOfDateStr+"T00:00:00");
+  const y = new Date(asOf); y.setDate(y.getDate()-1);
+  const yMonthKey = y.getFullYear() + '-' + String(y.getMonth()+1).padStart(2,'0');
+  if(yMonthKey === activeMonthKey){
+    return { day: y.getDate(), label: monthLabel(activeMonthKey).split(' ')[0] + ' ' + y.getDate(), inActiveMonth: true };
+  }
+  return { day: null, label: 'not in ' + monthLabel(activeMonthKey), inActiveMonth: false };
+}
 function nextMonthKey(monthKey){
   const [y,m] = monthKey.split('-').map(Number);
   const d = new Date(y, m, 1); // rolls over to next month
@@ -1032,7 +1041,8 @@ function renderOverview(){
       const draft = getDailyEntryDraft();
       const dayOptions = Array.from({length:totalDays},(_,i)=>i+1).map(d=>`<option value="${d}" ${d===entryDayNum?'selected':''}>${monthLabel(activeKey).split(' ')[0]} ${d}${m.dailyLog[d]?' — logged':''}</option>`).join('');
       const mtdSums = sumDailyLog(activeKey);
-      const dayEntry = m.dailyLog[entryDayNum] || {metaSpend:0,googleSpend:0,amazonSpend:0,websiteRevenue:0,amazonRevenue:0};
+      const yInfo = trueYesterdayInfo(activeKey, state.asOfDate);
+      const dayEntry = (yInfo.inActiveMonth && m.dailyLog[yInfo.day]) ? m.dailyLog[yInfo.day] : {metaSpend:0,googleSpend:0,amazonSpend:0,websiteRevenue:0,amazonRevenue:0};
 
       const websiteRoasYesterday = (dayEntry.metaSpend+dayEntry.googleSpend)>0 ? dayEntry.websiteRevenue/(dayEntry.metaSpend+dayEntry.googleSpend) : 0;
       const websiteRoasMtd = (mtdSums.metaSpend+mtdSums.googleSpend)>0 ? mtdSums.websiteRevenue/(mtdSums.metaSpend+mtdSums.googleSpend) : 0;
@@ -1145,9 +1155,9 @@ Aug 3	55334"></textarea>
         </div>
 
         <div class="section-title">Daily Performance Tracker <span class="n">Yesterday · MTD · Target · ERR · RRR · Difference</span></div>
-        <div class="assumption-note">ERR = current daily run rate (MTD ÷ days elapsed). RRR = required daily run rate for the ${daysRemaining} remaining days to hit target. Difference = RRR − ERR.</div>
+        <div class="assumption-note">ERR = current daily run rate (MTD ÷ days elapsed). RRR = required daily run rate for the ${daysRemaining} remaining days to hit target. Difference = RRR − ERR.${!yInfo.inActiveMonth ? ' The "Yesterday" column shows zero here because yesterday ('+yInfo.label+') falls outside '+monthLabel(activeKey)+' — switch the month above to see it.' : ''}</div>
         <div class="tablewrap"><table>
-          <thead><tr><th>Metric</th><th class="num">Yesterday</th><th class="num">MTD</th><th class="num">Target/Budget</th><th class="num">ERR</th><th class="num">RRR</th><th class="num">Difference</th></tr></thead>
+          <thead><tr><th>Metric</th><th class="num">Yesterday${yInfo.inActiveMonth ? ' ('+yInfo.label+')' : ''}</th><th class="num">MTD</th><th class="num">Target/Budget</th><th class="num">ERR</th><th class="num">RRR</th><th class="num">Difference</th></tr></thead>
           <tbody>
             ${trow('Meta Ads', dayEntry.metaSpend, mtdSums.metaSpend, m.targets.metaGoogleAdSpendBudget)}
             ${trow('Google Ads', dayEntry.googleSpend, mtdSums.googleSpend, m.targets.metaGoogleAdSpendBudget)}
