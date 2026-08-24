@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Invisel — Full August Correction (All Fields)</title>
+<style>
+  body{font-family:'IBM Plex Mono',monospace;background:#0F1419;color:#E6EDEA;padding:30px;max-width:1050px;margin:0 auto;}
+  h1{font-family:sans-serif;font-size:20px;color:#fff;}
+  p{font-family:sans-serif;font-size:13.5px;color:#B7C2C7;line-height:1.6;}
+  table{width:100%;border-collapse:collapse;font-size:10.5px;margin:16px 0;}
+  th,td{padding:4px 6px;border-bottom:1px solid #2A343A;text-align:right;}
+  th:first-child,td:first-child{text-align:left;}
+  th{color:#8A9AA3;font-weight:600;text-transform:uppercase;font-size:9px;}
+  .diff{color:#F0C868;font-weight:600;}
+  .same{color:#5A6A70;}
+  .na{color:#3A444A;font-style:italic;}
+  .btn{background:#0C8C82;color:#fff;border:none;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:sans-serif;}
+  .btn:hover{background:#075E57;}
+  .btn:disabled{background:#3A444A;cursor:not-allowed;}
+  #status{margin-top:16px;padding:14px 16px;border-radius:8px;font-family:sans-serif;font-size:13.5px;display:none;white-space:pre-wrap;line-height:1.6;}
+  .status-ok{background:#123324;border:1px solid #3ED598;color:#3ED598;}
+  .status-err{background:#3A1A1A;border:1px solid #FF6B6B;color:#FF6B6B;}
+  .status-progress{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;}
+  .warn{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13.5px;line-height:1.5;display:none;}
+  .note{background:#161D22;border:1px solid #2A343A;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13px;color:#B7C2C7;line-height:1.6;}
+</style>
+</head>
+<body>
+<h1>Full August Correction — All 5 Fields, Aug 1-23</h1>
+<p>This one tool replaces the three separate correction tools (website, Amazon revenue, ad spend). It sets Meta spend, Google spend, Amazon spend, Website revenue, and Amazon revenue for Aug 1-23 in a single pass.</p>
+
+<div class="note">
+  <b>One exception:</b> Aug 23's Amazon revenue was never provided (your Amazon Business Report only went to Aug 22), so that one cell is left untouched — everything else for Aug 23 gets corrected normally.
+</div>
+
+<div class="warn" id="protocolWarning">You appear to have opened this file directly (file://). Upload it to your GitHub repo and open it from the hosted URL instead.</div>
+
+<p id="loadingMsg">Loading current live data for comparison...</p>
+<table id="compareTable" style="display:none;">
+  <thead>
+    <tr><th rowspan="2">Day</th><th colspan="2">Meta Spend</th><th colspan="2">Google Spend</th><th colspan="2">Amazon Spend</th><th colspan="2">Website Rev</th><th colspan="2">Amazon Rev</th></tr>
+    <tr><th>Now</th><th>Correct</th><th>Now</th><th>Correct</th><th>Now</th><th>Correct</th><th>Now</th><th>Correct</th><th>Now</th><th>Correct</th></tr>
+  </thead>
+  <tbody id="compareRows"></tbody>
+</table>
+
+<button class="btn" id="importBtn" onclick="runCorrection()" disabled>Loading comparison first...</button>
+<div id="status"></div>
+
+<script>
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx7Iu7XJlvEQGQRfS8gBzleETxvCeqAHtVMRty0hIHy9IKtiLo9gxP9-sGN1Xw6Gymr/exec";
+const WRITE_TOKEN = "invisel-2026-9x7q2m";
+const MONTH_KEY = "2026-08";
+
+const CORRECT_VALUES = {"1": {"metaSpend": 88164.31, "googleSpend": 3973.4, "amazonSpend": 7520.61, "websiteRevenue": 173614, "amazonRevenue": 74859.0}, "2": {"metaSpend": 11112.4, "googleSpend": 8153.5, "amazonSpend": 8023.15, "websiteRevenue": 60615, "amazonRevenue": 63242.0}, "3": {"metaSpend": 42644.33, "googleSpend": 8368.9, "amazonSpend": 7191.25, "websiteRevenue": 55334, "amazonRevenue": 38941.0}, "4": {"metaSpend": 102986.61, "googleSpend": 8949.28, "amazonSpend": 8154.05, "websiteRevenue": 166283, "amazonRevenue": 86568.0}, "5": {"metaSpend": 101425.77, "googleSpend": 6340.51, "amazonSpend": 9020.82, "websiteRevenue": 160968, "amazonRevenue": 73271.0}, "6": {"metaSpend": 115387.42, "googleSpend": 4271.94, "amazonSpend": 8334.22, "websiteRevenue": 189945, "amazonRevenue": 78328.0}, "7": {"metaSpend": 143761.14, "googleSpend": 4287.84, "amazonSpend": 9826.92, "websiteRevenue": 193700, "amazonRevenue": 79165.0}, "8": {"metaSpend": 157306.53, "googleSpend": 4797.79, "amazonSpend": 10296.78, "websiteRevenue": 226439, "amazonRevenue": 87847.0}, "9": {"metaSpend": 169936.66, "googleSpend": 4774.0, "amazonSpend": 10474.37, "websiteRevenue": 233331, "amazonRevenue": 115645.05}, "10": {"metaSpend": 134795.8, "googleSpend": 4517.35, "amazonSpend": 11120.58, "websiteRevenue": 171717, "amazonRevenue": 95337.0}, "11": {"metaSpend": 124732.27, "googleSpend": 4863.3, "amazonSpend": 8691.25, "websiteRevenue": 201489, "amazonRevenue": 80020.0}, "12": {"metaSpend": 116485.82, "googleSpend": 8010.27, "amazonSpend": 8473.41, "websiteRevenue": 147404, "amazonRevenue": 90007.0}, "13": {"metaSpend": 97992.0, "googleSpend": 7150.33, "amazonSpend": 9187.57, "websiteRevenue": 158847, "amazonRevenue": 61675.2}, "14": {"metaSpend": 150580.85, "googleSpend": 10423.44, "amazonSpend": 7471.5, "websiteRevenue": 239561, "amazonRevenue": 66168.0}, "15": {"metaSpend": 139142.4, "googleSpend": 12524.95, "amazonSpend": 6680.92, "websiteRevenue": 275506, "amazonRevenue": 49920.2}, "16": {"metaSpend": 72934.29, "googleSpend": 5299.89, "amazonSpend": 8885.61, "websiteRevenue": 123237, "amazonRevenue": 79007.8}, "17": {"metaSpend": 42032.85, "googleSpend": 5260.49, "amazonSpend": 7087.05, "websiteRevenue": 83059, "amazonRevenue": 55961.2}, "18": {"metaSpend": 34685.37, "googleSpend": 6139.17, "amazonSpend": 6638.04, "websiteRevenue": 82066, "amazonRevenue": 62666.2}, "19": {"metaSpend": 41247.82, "googleSpend": 7050.25, "amazonSpend": 6764.99, "websiteRevenue": 92147, "amazonRevenue": 35915.0}, "20": {"metaSpend": 68115.07, "googleSpend": 6434.69, "amazonSpend": 7075.26, "websiteRevenue": 125751, "amazonRevenue": 46552.2}, "21": {"metaSpend": 113735.56, "googleSpend": 7791.96, "amazonSpend": 7246.19, "websiteRevenue": 182814, "amazonRevenue": 57656.8}, "22": {"metaSpend": 113409.91, "googleSpend": 7892.76, "amazonSpend": 7015.68, "websiteRevenue": 193595, "amazonRevenue": 89186.6}, "23": {"metaSpend": 148585.59, "googleSpend": 7838.67, "amazonSpend": 9565.57, "websiteRevenue": 217802}};
+
+if(window.location.protocol === 'file:') document.getElementById('protocolWarning').style.display = 'block';
+
+function inr(n){ return "Rs " + Math.round(n).toLocaleString('en-IN'); }
+function cell(current, correct){
+  if(correct === undefined) return "<td colspan='2' class='na'>not provided</td>";
+  const differs = Math.abs(current - correct) > 0.5;
+  return "<td>" + inr(current) + "</td><td class='" + (differs?'diff':'same') + "'>" + inr(correct) + "</td>";
+}
+
+let cachedState = null;
+
+async function loadComparison(){
+  try{
+    const res = await fetch(APPS_SCRIPT_URL + '?key=invisel-console-state');
+    const data = await res.json();
+    if(!data || !data.value){ throw new Error('No state found on backend.'); }
+    cachedState = JSON.parse(data.value);
+
+    if(!cachedState.months) cachedState.months = {};
+    if(!cachedState.months[MONTH_KEY]){
+      cachedState.months[MONTH_KEY] = {
+        targets: { total: 0, shopify: 0, marketplace: 0, metaGoogleAdSpendBudget: 0, amazonAdSpendBudget: 0 },
+        mtd: { shopifyRevenue: 0, marketplaceRevenue: 0, metaGoogleSpend: 0, amazonAdsSpend: 0, b2bRevenue: 0, b2cRevenue: 0, directIncome: 0 },
+        overheads: [], dailyLog: {}
+      };
+    }
+    const m = cachedState.months[MONTH_KEY];
+    if(!m.dailyLog) m.dailyLog = {};
+
+    const tbody = document.getElementById('compareRows');
+    let anyDiff = false;
+    Object.keys(CORRECT_VALUES).map(Number).sort((a,b)=>a-b).forEach(function(day){
+      const key = String(day);
+      const existing = m.dailyLog[key] || {};
+      const correct = CORRECT_VALUES[key];
+      ['metaSpend','googleSpend','amazonSpend','websiteRevenue','amazonRevenue'].forEach(function(f){
+        if(correct[f] !== undefined && Math.abs((existing[f]||0) - correct[f]) > 0.5) anyDiff = true;
+      });
+      const tr = document.createElement('tr');
+      tr.innerHTML = "<td>Aug " + day + "</td>"
+        + cell(existing.metaSpend||0, correct.metaSpend)
+        + cell(existing.googleSpend||0, correct.googleSpend)
+        + cell(existing.amazonSpend||0, correct.amazonSpend)
+        + cell(existing.websiteRevenue||0, correct.websiteRevenue)
+        + cell(existing.amazonRevenue||0, correct.amazonRevenue);
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('loadingMsg').style.display = 'none';
+    document.getElementById('compareTable').style.display = 'table';
+    const btn = document.getElementById('importBtn');
+    btn.disabled = false;
+    btn.textContent = anyDiff ? 'Apply All Corrections' : 'Re-apply Anyway (no differences found)';
+  }catch(e){
+    document.getElementById('loadingMsg').textContent = 'Could not load comparison: ' + e.message;
+  }
+}
+loadComparison();
+
+async function runCorrection(){
+  const btn = document.getElementById('importBtn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.style.display = 'block';
+  status.className = 'status-progress';
+  status.textContent = 'Applying corrections...';
+
+  try{
+    const state = cachedState;
+    const m = state.months[MONTH_KEY];
+
+    Object.keys(CORRECT_VALUES).forEach(function(day){
+      if(!m.dailyLog[day]){
+        m.dailyLog[day] = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+      }
+      const correct = CORRECT_VALUES[day];
+      if(correct.metaSpend !== undefined) m.dailyLog[day].metaSpend = correct.metaSpend;
+      if(correct.googleSpend !== undefined) m.dailyLog[day].googleSpend = correct.googleSpend;
+      if(correct.amazonSpend !== undefined) m.dailyLog[day].amazonSpend = correct.amazonSpend;
+      if(correct.websiteRevenue !== undefined) m.dailyLog[day].websiteRevenue = correct.websiteRevenue;
+      if(correct.amazonRevenue !== undefined) m.dailyLog[day].amazonRevenue = correct.amazonRevenue;
+      // Aug 23 amazonRevenue intentionally left as whatever it already was
+    });
+
+    let sums = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+    Object.values(m.dailyLog).forEach(function(e){
+      sums.metaSpend += e.metaSpend||0;
+      sums.googleSpend += e.googleSpend||0;
+      sums.amazonSpend += e.amazonSpend||0;
+      sums.websiteRevenue += e.websiteRevenue||0;
+      sums.amazonRevenue += e.amazonRevenue||0;
+    });
+    m.mtd.shopifyRevenue = sums.websiteRevenue;
+    m.mtd.marketplaceRevenue = sums.amazonRevenue;
+    m.mtd.metaGoogleSpend = sums.metaSpend + sums.googleSpend;
+    m.mtd.amazonAdsSpend = sums.amazonSpend;
+
+    state.lastSavedAt = new Date().toISOString();
+    state.lastSavedBy = 'Full August Correction (all fields)';
+
+    status.textContent = 'Writing to the backend...';
+    const writeRes = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'set', key:'invisel-console-state', value: JSON.stringify(state), token: WRITE_TOKEN, updatedBy: 'Full August Correction' })
+    });
+    const writeData = await writeRes.json();
+    if(!writeData.ok){ throw new Error('Write rejected: ' + JSON.stringify(writeData)); }
+
+    status.className = 'status-ok';
+    status.textContent = 'Success. Aug 1-23 fully corrected across all fields.\n\n'
+      + 'August MTD totals now:\n'
+      + 'Website Revenue: ' + inr(m.mtd.shopifyRevenue) + '\n'
+      + 'Amazon Revenue: ' + inr(m.mtd.marketplaceRevenue) + ' (Aug 23 not included - not provided)\n'
+      + 'Meta+Google Spend: ' + inr(m.mtd.metaGoogleSpend) + '\n'
+      + 'Amazon Ad Spend: ' + inr(m.mtd.amazonAdsSpend) + '\n\n'
+      + 'Reload the Growth console on August 2026 to see it.';
+  }catch(e){
+    status.className = 'status-err';
+    status.textContent = 'Correction failed: ' + e.message + '\n\nSafe to retry.';
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
