@@ -171,7 +171,9 @@ const DEFAULT_STATE = {
     metaGoogleAllocPct: 0.9246,
     amazonAdsAllocPct: 0.0754,
     blendedRoasTarget: 2.45,
-    incrementalRoasTarget: 2.55
+    incrementalRoasTarget: 2.55,
+    rtoProvisionPctShopify: 0,
+    rtoProvisionPctAmazon: 0
   },
   discountFloorPct: 0.30,
   bundleFloorPct: 0.30,
@@ -636,6 +638,34 @@ function nextMonthKey(monthKey){
   const [y,m] = monthKey.split('-').map(Number);
   const d = new Date(y, m, 1); // rolls over to next month
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+function prevMonthKey(monthKey){
+  const [y,m] = monthKey.split('-').map(Number);
+  const d = new Date(y, m-2, 1); // rolls back to previous month
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+function computeDailyCM3(day, monthKey){
+  const m = state.months[monthKey];
+  if(!m || !m.dailyLog[day]) return null;
+  const e = m.dailyLog[day];
+  const a = state.assumptions;
+  const totalDays = daysInMonthOf(monthKey);
+  const cogsShopify = e.websiteRevenue * a.cogsD2C;
+  const cogsAmazon = e.amazonRevenue * a.marketplaceCogsPct;
+  const totalRevenue = e.websiteRevenue + e.amazonRevenue;
+  const marketingSpend = e.metaSpend + e.googleSpend + e.amazonSpend;
+  const sumCat = (cats)=> (m.overheads||[]).filter(o=>cats.includes(o.category)).reduce((s,o)=>s+o.amount,0);
+  // Overheads are monthly figures — prorated per day since there's no
+  // daily entry for them. Ad spend and revenue are real daily numbers,
+  // not prorated.
+  const directExpensesDaily = sumCat(['Direct Expense'])/totalDays;
+  const techDaily = sumCat(['Technology & Platform'])/totalDays;
+  const rtoShopify = e.websiteRevenue * (a.rtoProvisionPctShopify||0);
+  const rtoAmazon = e.amazonRevenue * (a.rtoProvisionPctAmazon||0);
+  const cm1 = totalRevenue - cogsShopify - cogsAmazon - directExpensesDaily;
+  const cm2 = cm1 - marketingSpend;
+  const cm3 = cm2 - techDaily - rtoShopify - rtoAmazon;
+  return { totalRevenue, cm3 };
 }
 function getMonthDayInfo(monthKey, asOfDateStr){
   const totalDays = daysInMonthOf(monthKey);
@@ -1250,13 +1280,21 @@ function computeIncomeStatementLine(rev, marketingSpend, overheads, a){
   const otherIndirect = sumCat(['Operating','Administrative & General','Other Indirect']);
   const indirectIncome = sumCat(['Indirect Income']);
 
+  // RTO provisioning — per channel, deducted same-day as an estimate
+  // (a real return can take 7-15 days to actually land). Kept as its
+  // own labeled line rather than folded into COGS or overheads, since
+  // it's a distinct risk signal, not a known cost.
+  const rtoProvisionShopify = rev.shopify * (a.rtoProvisionPctShopify||0);
+  const rtoProvisionAmazon = rev.marketplace * (a.rtoProvisionPctAmazon||0);
+  const rtoProvisionTotal = rtoProvisionShopify + rtoProvisionAmazon;
+
   const cm1 = totalRevenue - totalCogs - directExpenses;
   const cm2 = cm1 - marketingSpend;
-  const cm3 = cm2 - tech;
+  const cm3 = cm2 - tech - rtoProvisionTotal;
   const netProfit = cm3 - otherIndirect + indirectIncome;
 
   return { totalRevenue, totalCogs, cogsShopify, cogsMarketplace, cogsB2B, cogsB2C, directExpenses, cm1,
-    marketingSpend, cm2, tech, cm3, otherIndirect, indirectIncome, netProfit,
+    marketingSpend, cm2, tech, rtoProvisionShopify, rtoProvisionAmazon, rtoProvisionTotal, cm3, otherIndirect, indirectIncome, netProfit,
     cm1pct: totalRevenue? cm1/totalRevenue:0, cm2pct: totalRevenue? cm2/totalRevenue:0,
     cm3pct: totalRevenue? cm3/totalRevenue:0, netMargin: totalRevenue? netProfit/totalRevenue:0 };
 }
@@ -1334,6 +1372,13 @@ function renderIncome(){
       <div class="card"><label class="field">Direct Income — COD charges etc. (₹, MTD)</label><input type="number" value="${m.mtd.directIncome}" data-fid="mtd-directIncome" oninput="updateMtd('directIncome', this.value)"/><div class="hint">Trailing avg: ${inr(REAL_PL_TRAILING_AVG.directIncome)}/mo</div></div>
     </div>
 
+    <div class="section-title">RTO Provision <span class="n">estimated same-day, since real returns take 7-15 days to land</span></div>
+    <div class="assumption-note">Defaults to 0% — no trailing average is assumed, since there's no return data behind it yet. Set a real % once you have one (from Porter/courier data, marketplace return reports, or your own estimate). Shown as its own line in the Income Statement below, not folded into COGS or overheads.</div>
+    <div class="grid grid-2">
+      <div class="card"><label class="field">Shopify RTO Provision %</label><input type="number" step="0.1" value="${(a.rtoProvisionPctShopify*100).toFixed(2)}" data-fid="assum-rtoProvisionPctShopify" oninput="updateAssumption('rtoProvisionPctShopify', this.value, true)"/><div class="hint">Applied to Shopify revenue only</div></div>
+      <div class="card"><label class="field">Amazon RTO Provision %</label><input type="number" step="0.1" value="${(a.rtoProvisionPctAmazon*100).toFixed(2)}" data-fid="assum-rtoProvisionPctAmazon" oninput="updateAssumption('rtoProvisionPctAmazon', this.value, true)"/><div class="hint">Applied to Amazon revenue only</div></div>
+    </div>
+
     <div class="section-title">${monthLabel(activeKey)} Income Statement</div>
     <div class="assumption-note">Marketing &amp; Branding Expenses below is <b>not</b> separately typed — it's your MTD actual ad spend (Meta+Google+Amazon Ads from Overview) projected to a full month at the same daily pace as revenue. Change ad spend in Overview, not here.</div>
     <div class="tablewrap"><table>
@@ -1351,6 +1396,7 @@ function renderIncome(){
         ${isRow('Marketing & Branding (from ad spend pace)', -actualLine.marketingSpend, -projLine.marketingSpend)}
         ${isRowPct('CM2', actualLine.cm2, actualLine.cm2pct, projLine.cm2, projLine.cm2pct)}
         ${isRow('Technology & Platform', -actualLine.tech, -projLine.tech)}
+        ${isRow('RTO Provision (Shopify + Amazon, estimate)', -actualLine.rtoProvisionTotal, -projLine.rtoProvisionTotal)}
         ${isRowPct('CM3', actualLine.cm3, actualLine.cm3pct, projLine.cm3, projLine.cm3pct)}
         ${isRow('Other Indirect Expenses', -actualLine.otherIndirect, -projLine.otherIndirect)}
         ${isRow('Indirect Income', actualLine.indirectIncome, projLine.indirectIncome)}
@@ -1366,6 +1412,74 @@ function renderIncome(){
       <tbody>${overheadRows}</tbody>
     </table></div>
     <button class="btn ghost small" style="margin-top:8px;" onclick="addOverheadRow()">+ Add expense line</button>
+
+    ${(function(){
+      const prevKey = prevMonthKey(activeKey);
+      const prevMonth = state.months[prevKey];
+      let prevComparisonHtml = '<div class="hint">No data logged for the previous month to compare against.</div>';
+      if(prevMonth){
+        const prevSums = sumDailyLog(prevKey);
+        const prevOverheads = prevMonth.overheads || [];
+        const prevMarketingSpend = prevSums.metaSpend + prevSums.googleSpend + prevSums.amazonSpend;
+        const aWithB2BPrev = Object.assign({}, state.assumptions, { cogsB2C_or_B2B: state.assumptions.cogsB2B });
+        const prevLine = computeIncomeStatementLine(
+          { shopify:prevSums.websiteRevenue, marketplace:prevSums.amazonRevenue, b2b:prevMonth.mtd.b2bRevenue||0, b2c:prevMonth.mtd.b2cRevenue||0, directIncome:prevMonth.mtd.directIncome||0 },
+          prevMarketingSpend, prevOverheads, aWithB2BPrev
+        );
+        prevComparisonHtml = `
+          <div class="grid grid-2">
+            <div class="card kpi"><div class="label">${monthLabel(activeKey)} Projected Revenue vs ${monthLabel(prevKey)} Actual</div><div class="value">${inr(projLine.totalRevenue)}</div><div class="sub">vs ${inr(prevLine.totalRevenue)} last month (${prevLine.totalRevenue? (projLine.totalRevenue>=prevLine.totalRevenue?'+':'')+pct((projLine.totalRevenue-prevLine.totalRevenue)/prevLine.totalRevenue) : '—'})</div></div>
+            <div class="card kpi"><div class="label">${monthLabel(activeKey)} Projected CM3 vs ${monthLabel(prevKey)} Actual</div><div class="value" style="color:${projLine.cm3<0?'var(--danger)':'inherit'}">${inr(projLine.cm3)}</div><div class="sub">vs ${inr(prevLine.cm3)} last month (${prevLine.cm3!==0? (projLine.cm3>=prevLine.cm3?'+':'')+pct((projLine.cm3-prevLine.cm3)/Math.abs(prevLine.cm3)) : '—'})</div></div>
+          </div>`;
+      }
+
+      const loggedDays = Object.keys(m.dailyLog).map(Number).sort((a,b)=>a-b);
+      const last7Days = loggedDays.slice(-7);
+      let cm3TrendHtml = '<div class="hint">No days logged yet this month to chart.</div>';
+      if(last7Days.length){
+        const points = last7Days.map(d=>({ day:d, ...computeDailyCM3(d, activeKey) }));
+        const values = points.map(p=>p.cm3);
+        const min = Math.min(...values, 0);
+        const max = Math.max(...values, 0);
+        const range = (max-min) || 1;
+        const w = 700, h = 150, padding = 26;
+        const slot = (w-padding*2)/Math.max(points.length-1,1);
+        const zeroY = h-padding - ((0-min)/range)*(h-padding*2);
+        let bars = '', line = '';
+        const coords = points.map((p,i)=>{
+          const x = padding + i*slot;
+          const y = h-padding - ((p.cm3-min)/range)*(h-padding*2);
+          return {x,y,p};
+        });
+        coords.forEach((c,i)=>{
+          bars += `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="3.5" fill="${c.p.cm3<0?'#FF6B6B':'#0C8C82'}"><title>Day ${c.p.day}: CM3 ${inr(c.p.cm3)}</title></circle>`;
+          bars += `<text x="${c.x.toFixed(1)}" y="${h-6}" font-size="9" fill="#57626C" text-anchor="middle">${c.p.day}</text>`;
+          if(i>0) line += `<line x1="${coords[i-1].x.toFixed(1)}" y1="${coords[i-1].y.toFixed(1)}" x2="${c.x.toFixed(1)}" y2="${c.y.toFixed(1)}" stroke="#0C8C82" stroke-width="1.5" />`;
+        });
+        cm3TrendHtml = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:150px;">
+          <line x1="${padding}" y1="${zeroY.toFixed(1)}" x2="${w-padding}" y2="${zeroY.toFixed(1)}" stroke="#DBE2DF" stroke-dasharray="3,3" />
+          ${line}${bars}
+        </svg>
+        <div class="hint">Dashed line = breakeven (CM3 = 0). Overheads are the monthly figure divided evenly across days — ad spend and revenue are the real daily numbers, so this is an estimate, not exact daily accounting.</div>`;
+      }
+
+      return `
+        <div class="section-title">Scale / Hold Visibility <span class="n">no verdict — just the signals side by side</span></div>
+        <div class="assumption-note">Run-rate, month-end-vs-last-month, and the CM3 trend in one place — reading revenue pace without profitability next to it risks the wrong call.</div>
+
+        <div class="grid grid-3">
+          <div class="card kpi"><div class="label">Total Revenue Run-Rate</div><div class="value">${inr(P.requiredDaily)}</div><div class="sub">required daily to hit target · ${P.dayInfo.daysRemaining} days left</div></div>
+          <div class="card kpi"><div class="label">Current Daily Pace</div><div class="value">${inr(P.dayInfo.daysElapsed>0? P.mtdTotal/P.dayInfo.daysElapsed : 0)}</div><div class="sub">${(P.dayInfo.daysElapsed>0 ? P.mtdTotal/P.dayInfo.daysElapsed : 0) >= P.requiredDaily ? 'ahead of required pace' : 'behind required pace'}</div></div>
+          <div class="card kpi"><div class="label">Projected Month-End Revenue</div><div class="value">${inr(P.projTotal)}</div><div class="sub">${pct(m.targets.total? P.projTotal/m.targets.total:0)} of target</div></div>
+        </div>
+
+        <div class="hint" style="margin-top:10px;margin-bottom:4px;">Month-end projection vs last month's actual — revenue and CM3 both, since revenue-only comparison is what risks reading a bad month as a good one.</div>
+        ${prevComparisonHtml}
+
+        <div class="section-title" style="margin-top:16px;">CM3 Trend <span class="n">last ${last7Days.length} logged day${last7Days.length===1?'':'s'}</span></div>
+        <div class="card">${cm3TrendHtml}</div>
+      `;
+    })()}
   `;
 }
 

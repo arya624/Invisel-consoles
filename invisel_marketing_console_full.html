@@ -438,7 +438,7 @@ async function syncSet(key, value){
   try{ await window.storage.set(key, value, true); return true; }catch(e){ return false; }
 }
 
-const COST_FIELDS_NEVER_HELD_HERE = ['cogsD2C','cogsB2B','marketplaceCogsPct','amazonCommissionPct','d2cShippingPct','marketplaceShippingPct','gstCancelRtoPct'];
+const COST_FIELDS_NEVER_HELD_HERE = ['cogsD2C','cogsB2B','marketplaceCogsPct','amazonCommissionPct','d2cShippingPct','marketplaceShippingPct','gstCancelRtoPct','rtoProvisionPctShopify','rtoProvisionPctAmazon'];
 
 let saveTimer = null;
 async function loadState(){
