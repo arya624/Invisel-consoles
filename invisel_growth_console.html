@@ -650,8 +650,8 @@ function computeDailyCM3(day, monthKey){
   const e = m.dailyLog[day];
   const a = state.assumptions;
   const totalDays = daysInMonthOf(monthKey);
-  const cogsShopify = e.websiteRevenue * a.cogsD2C;
-  const cogsAmazon = e.amazonRevenue * a.marketplaceCogsPct;
+  const cogsShopify = (e.shopifyCogs!==undefined && e.shopifyCogs!==null) ? e.shopifyCogs : e.websiteRevenue * a.cogsD2C;
+  const cogsAmazon = (e.amazonCogs!==undefined && e.amazonCogs!==null) ? e.amazonCogs : e.amazonRevenue * a.marketplaceCogsPct;
   const totalRevenue = e.websiteRevenue + e.amazonRevenue;
   const marketingSpend = e.metaSpend + e.googleSpend + e.amazonSpend;
   const sumCat = (cats)=> (m.overheads||[]).filter(o=>cats.includes(o.category)).reduce((s,o)=>s+o.amount,0);
@@ -660,8 +660,8 @@ function computeDailyCM3(day, monthKey){
   // not prorated.
   const directExpensesDaily = sumCat(['Direct Expense'])/totalDays;
   const techDaily = sumCat(['Technology & Platform'])/totalDays;
-  const rtoShopify = e.websiteRevenue * (a.rtoProvisionPctShopify||0);
-  const rtoAmazon = e.amazonRevenue * (a.rtoProvisionPctAmazon||0);
+  const rtoShopify = (e.rtoActualShopify!==undefined && e.rtoActualShopify!==null) ? e.rtoActualShopify : e.websiteRevenue * (a.rtoProvisionPctShopify||0);
+  const rtoAmazon = (e.rtoActualAmazon!==undefined && e.rtoActualAmazon!==null) ? e.rtoActualAmazon : e.amazonRevenue * (a.rtoProvisionPctAmazon||0);
   const cm1 = totalRevenue - cogsShopify - cogsAmazon - directExpensesDaily;
   const cm2 = cm1 - marketingSpend;
   const cm3 = cm2 - techDaily - rtoShopify - rtoAmazon;
@@ -763,6 +763,11 @@ function getDailyEntryDraft(){
   const existing = m.dailyLog[day];
   return existing ? Object.assign({}, existing) : { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
 }
+function parseOptionalCogsRto(val){
+  if(val===undefined || val===null || val==='') return undefined;
+  const v = parseFloat(val);
+  return isNaN(v) ? undefined : v;
+}
 function saveDailyEntry(fields){
   const m = ensureMonth(state.activeMonth);
   const day = ensureDailyEntryDay();
@@ -774,6 +779,18 @@ function saveDailyEntry(fields){
     websiteRevenue: parseFloat(fields.websiteRevenue)||0,
     amazonRevenue: parseFloat(fields.amazonRevenue)||0
   };
+  // Real COGS/RTO are optional — blank means "not entered, use the
+  // assumption-based estimate," any typed value (including 0) means
+  // "this is the real confirmed number." Only Growth's entry form
+  // offers these fields; Marketing consoles never see or send them.
+  const shopifyCogsVal = parseOptionalCogsRto(fields.shopifyCogs);
+  const amazonCogsVal = parseOptionalCogsRto(fields.amazonCogs);
+  const rtoActualShopifyVal = parseOptionalCogsRto(fields.rtoActualShopify);
+  const rtoActualAmazonVal = parseOptionalCogsRto(fields.rtoActualAmazon);
+  if(shopifyCogsVal!==undefined) next.shopifyCogs = shopifyCogsVal;
+  if(amazonCogsVal!==undefined) next.amazonCogs = amazonCogsVal;
+  if(rtoActualShopifyVal!==undefined) next.rtoActualShopify = rtoActualShopifyVal;
+  if(rtoActualAmazonVal!==undefined) next.rtoActualAmazon = rtoActualAmazonVal;
   // Delta-update the existing MTD aggregates so downstream calculations
   // (Income Statement, CM, discount profitability) stay consistent
   // without needing to be rewritten around the daily log.
@@ -805,7 +822,7 @@ function deleteDailyEntry(day){
    Sheets, or any ad/marketplace report), with a preview before
    committing. Handles common date formats and Rupee/comma formatting.
 --------------------------------------------------------------------- */
-const BULK_FIELD_LABELS = { websiteRevenue:'Website Revenue', amazonRevenue:'Amazon Revenue', metaSpend:'Meta Spend', googleSpend:'Google Spend', amazonSpend:'Amazon Spend' };
+const BULK_FIELD_LABELS = { websiteRevenue:'Website Revenue', amazonRevenue:'Amazon Revenue', metaSpend:'Meta Spend', googleSpend:'Google Spend', amazonSpend:'Amazon Spend', shopifyCogs:'Shopify COGS (real ₹)', amazonCogs:'Amazon COGS (real ₹)', rtoActualShopify:'Shopify RTO Actual (₹)', rtoActualAmazon:'Amazon RTO Actual (₹)' };
 let bulkImportField = 'websiteRevenue';
 let bulkImportParsed = [];
 
@@ -1144,8 +1161,17 @@ function renderOverview(){
             <div><label class="field">Amazon Spend (₹)</label><input type="number" id="entry-amzspend" value="${draft.amazonSpend}"/></div>
             <div><label class="field">Amazon Revenue (₹)</label><input type="number" id="entry-amzrev" value="${draft.amazonRevenue}"/></div>
           </div>
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+            <label class="field" style="margin-bottom:6px;">Real COGS &amp; RTO <span class="n">optional — leave blank to keep using the assumption-based estimate</span></label>
+            <div class="grid grid-4">
+              <div><label class="field">Shopify COGS (₹, real)</label><input type="number" id="entry-shopifycogs" value="${draft.shopifyCogs!==undefined?draft.shopifyCogs:''}" placeholder="est. ${inr(draft.websiteRevenue*a.cogsD2C)}"/></div>
+              <div><label class="field">Amazon COGS (₹, real)</label><input type="number" id="entry-amazoncogs" value="${draft.amazonCogs!==undefined?draft.amazonCogs:''}" placeholder="est. ${inr(draft.amazonRevenue*a.marketplaceCogsPct)}"/></div>
+              <div><label class="field">Shopify RTO Actual (₹)</label><input type="number" id="entry-rtoshopify" value="${draft.rtoActualShopify!==undefined?draft.rtoActualShopify:''}" placeholder="est. ${inr(draft.websiteRevenue*(a.rtoProvisionPctShopify||0))}"/></div>
+              <div><label class="field">Amazon RTO Actual (₹)</label><input type="number" id="entry-rtoamazon" value="${draft.rtoActualAmazon!==undefined?draft.rtoActualAmazon:''}" placeholder="est. ${inr(draft.amazonRevenue*(a.rtoProvisionPctAmazon||0))}"/></div>
+            </div>
+          </div>
           <div style="margin-top:12px;display:flex;gap:8px;">
-            <button class="btn small" onclick="saveDailyEntry({metaSpend:el('entry-meta').value, googleSpend:el('entry-google').value, websiteRevenue:el('entry-webrev').value, amazonSpend:el('entry-amzspend').value, amazonRevenue:el('entry-amzrev').value})">Save Day</button>
+            <button class="btn small" onclick="saveDailyEntry({metaSpend:el('entry-meta').value, googleSpend:el('entry-google').value, websiteRevenue:el('entry-webrev').value, amazonSpend:el('entry-amzspend').value, amazonRevenue:el('entry-amzrev').value, shopifyCogs:el('entry-shopifycogs').value, amazonCogs:el('entry-amazoncogs').value, rtoActualShopify:el('entry-rtoshopify').value, rtoActualAmazon:el('entry-rtoamazon').value})">Save Day</button>
             ${m.dailyLog[entryDayNum] ? `<button class="btn ghost small" onclick="deleteDailyEntry(${entryDayNum})">Delete This Day</button>` : ''}
           </div>
         </div>
@@ -1266,9 +1292,16 @@ Aug 3	55334"></textarea>
 /* ---------------------------------------------------------------------
    INCOME STATEMENT (MIS)
 --------------------------------------------------------------------- */
-function computeIncomeStatementLine(rev, marketingSpend, overheads, a){
-  const cogsShopify = rev.shopify * a.cogsD2C;
-  const cogsMarketplace = rev.marketplace * a.marketplaceCogsPct;
+function computeIncomeStatementLine(rev, marketingSpend, overheads, a, realFigures){
+  // realFigures (optional): { cogsShopify, cogsMarketplace, rtoShopify, rtoAmazon } —
+  // when supplied, these are the blended real-or-estimated Shopify/Amazon
+  // figures computed from actual daily entries where available, falling
+  // back to the assumption-based % for days not yet logged with real
+  // numbers. When omitted, falls back to pure assumption-based calc
+  // (kept for any caller that hasn't been updated, and for B2B/B2C which
+  // never got real tracking requested).
+  const cogsShopify = realFigures ? realFigures.cogsShopify : rev.shopify * a.cogsD2C;
+  const cogsMarketplace = realFigures ? realFigures.cogsMarketplace : rev.marketplace * a.marketplaceCogsPct;
   const cogsB2B = rev.b2b * a.cogsB2C_or_B2B; // set by caller to cogsB2B
   const cogsB2C = rev.b2c * a.cogsD2C;
   const totalCogs = cogsShopify + cogsMarketplace + cogsB2B + cogsB2C;
@@ -1280,12 +1313,11 @@ function computeIncomeStatementLine(rev, marketingSpend, overheads, a){
   const otherIndirect = sumCat(['Operating','Administrative & General','Other Indirect']);
   const indirectIncome = sumCat(['Indirect Income']);
 
-  // RTO provisioning — per channel, deducted same-day as an estimate
-  // (a real return can take 7-15 days to actually land). Kept as its
-  // own labeled line rather than folded into COGS or overheads, since
-  // it's a distinct risk signal, not a known cost.
-  const rtoProvisionShopify = rev.shopify * (a.rtoProvisionPctShopify||0);
-  const rtoProvisionAmazon = rev.marketplace * (a.rtoProvisionPctAmazon||0);
+  // RTO — per channel, either a real confirmed amount (once returns for
+  // that date have settled) or a same-day provisioned estimate. Kept as
+  // its own labeled line rather than folded into COGS or overheads.
+  const rtoProvisionShopify = realFigures ? realFigures.rtoShopify : rev.shopify * (a.rtoProvisionPctShopify||0);
+  const rtoProvisionAmazon = realFigures ? realFigures.rtoAmazon : rev.marketplace * (a.rtoProvisionPctAmazon||0);
   const rtoProvisionTotal = rtoProvisionShopify + rtoProvisionAmazon;
 
   const cm1 = totalRevenue - totalCogs - directExpenses;
@@ -1298,6 +1330,29 @@ function computeIncomeStatementLine(rev, marketingSpend, overheads, a){
     cm1pct: totalRevenue? cm1/totalRevenue:0, cm2pct: totalRevenue? cm2/totalRevenue:0,
     cm3pct: totalRevenue? cm3/totalRevenue:0, netMargin: totalRevenue? netProfit/totalRevenue:0 };
 }
+/* Sums real-entered COGS/RTO across all logged days of a month, falling
+   back day-by-day to the assumption-based estimate for any day that
+   doesn't have a real number entered yet. Also returns how much Shopify/
+   Amazon revenue is already "locked in" by logged days, so the caller
+   can apply the assumption-based % only to the *remaining* (not yet
+   logged) portion when projecting the rest of the month. */
+function computeMonthCogsRto(monthKey){
+  const m = state.months[monthKey];
+  const a = state.assumptions;
+  let cogsShopify=0, cogsMarketplace=0, rtoShopify=0, rtoAmazon=0, loggedShopifyRevenue=0, loggedAmazonRevenue=0;
+  if(m && m.dailyLog){
+    Object.values(m.dailyLog).forEach(e=>{
+      const webRev = e.websiteRevenue||0, amzRev = e.amazonRevenue||0;
+      cogsShopify += (e.shopifyCogs!==undefined && e.shopifyCogs!==null) ? e.shopifyCogs : webRev*a.cogsD2C;
+      cogsMarketplace += (e.amazonCogs!==undefined && e.amazonCogs!==null) ? e.amazonCogs : amzRev*a.marketplaceCogsPct;
+      rtoShopify += (e.rtoActualShopify!==undefined && e.rtoActualShopify!==null) ? e.rtoActualShopify : webRev*(a.rtoProvisionPctShopify||0);
+      rtoAmazon += (e.rtoActualAmazon!==undefined && e.rtoActualAmazon!==null) ? e.rtoActualAmazon : amzRev*(a.rtoProvisionPctAmazon||0);
+      loggedShopifyRevenue += webRev;
+      loggedAmazonRevenue += amzRev;
+    });
+  }
+  return { cogsShopify, cogsMarketplace, rtoShopify, rtoAmazon, loggedShopifyRevenue, loggedAmazonRevenue };
+}
 function renderIncome(){
   const s = state; const a = s.assumptions;
   const activeKey = s.activeMonth;
@@ -1305,13 +1360,30 @@ function renderIncome(){
   const m = P.m;
 
   const aWithB2B = Object.assign({}, a, { cogsB2C_or_B2B: a.cogsB2B });
+  const monthCogsRto = computeMonthCogsRto(activeKey);
+  // "Actual" (MTD so far) uses exactly the real-or-estimated sums from
+  // logged days — that IS the actual-to-date figure.
+  const actualRealFigures = { cogsShopify: monthCogsRto.cogsShopify, cogsMarketplace: monthCogsRto.cogsMarketplace, rtoShopify: monthCogsRto.rtoShopify, rtoAmazon: monthCogsRto.rtoAmazon };
+  // Projection = what's already logged (real-or-estimated) + the
+  // assumption-based % applied only to the *remaining* projected
+  // revenue that hasn't been logged yet, so entering real numbers for
+  // more days makes the projection progressively more accurate instead
+  // of double-counting or overwriting logged days.
+  const remainingShopifyRev = Math.max(P.projShopify - monthCogsRto.loggedShopifyRevenue, 0);
+  const remainingAmazonRev = Math.max(P.projMarketplace - monthCogsRto.loggedAmazonRevenue, 0);
+  const projRealFigures = {
+    cogsShopify: monthCogsRto.cogsShopify + remainingShopifyRev*a.cogsD2C,
+    cogsMarketplace: monthCogsRto.cogsMarketplace + remainingAmazonRev*a.marketplaceCogsPct,
+    rtoShopify: monthCogsRto.rtoShopify + remainingShopifyRev*(a.rtoProvisionPctShopify||0),
+    rtoAmazon: monthCogsRto.rtoAmazon + remainingAmazonRev*(a.rtoProvisionPctAmazon||0)
+  };
   const actualLine = computeIncomeStatementLine(
     { shopify:m.mtd.shopifyRevenue, marketplace:m.mtd.marketplaceRevenue, b2b:m.mtd.b2bRevenue, b2c:m.mtd.b2cRevenue, directIncome:m.mtd.directIncome },
-    P.mtdSpend, m.overheads, aWithB2B
+    P.mtdSpend, m.overheads, aWithB2B, actualRealFigures
   );
   const projLine = computeIncomeStatementLine(
     { shopify:P.projShopify, marketplace:P.projMarketplace, b2b:P.projB2B, b2c:P.projB2C, directIncome:P.projDirectIncome },
-    P.projMarketingSpend, m.overheads, aWithB2B
+    P.projMarketingSpend, m.overheads, aWithB2B, projRealFigures
   );
   const label = P.dayInfo.status==='past' ? 'Final' : 'Projected Full Month';
 

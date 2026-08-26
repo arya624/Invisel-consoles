@@ -241,6 +241,20 @@ async function loadState(){
   COST_FIELDS_NEVER_HELD_HERE.forEach(k=>{ delete state.assumptions[k]; });
   delete state.discountFloorPct;
   delete state.bundleFloorPct;
+  // Real COGS and RTO Actual are entered per-day in the Growth console's
+  // daily log — genuine cost data riding in the same shared dailyLog
+  // entries used for revenue/spend. Strip them from every day, in every
+  // month, the same way cost assumptions are stripped above.
+  const DAILY_LOG_COST_FIELDS = ['shopifyCogs','amazonCogs','rtoActualShopify','rtoActualAmazon'];
+  if(state.months){
+    Object.values(state.months).forEach(monthObj=>{
+      if(monthObj && monthObj.dailyLog){
+        Object.values(monthObj.dailyLog).forEach(dayEntry=>{
+          DAILY_LOG_COST_FIELDS.forEach(k=>{ delete dayEntry[k]; });
+        });
+      }
+    });
+  }
 }
 function renderLastUpdated(){
   const el2 = document.getElementById('lastUpdated');
@@ -268,7 +282,21 @@ function queueSave(){
       }catch(e){}
       base.asOfDate = state.asOfDate;
       base.activeMonth = state.activeMonth;
-      base.months = Object.assign({}, base.months||{}, state.months);
+      // Merge month-by-month, and within each month day-by-day, so that
+      // any cost fields (real COGS, RTO Actual) present in the freshly
+      // fetched base — but stripped from this file's in-memory copy —
+      // are preserved rather than silently dropped by a shallow replace.
+      base.months = base.months || {};
+      Object.keys(state.months).forEach(function(mk){
+        const baseMonth = base.months[mk] || {};
+        const stateMonth = state.months[mk];
+        const mergedDailyLog = {};
+        const allDays = new Set([...Object.keys(baseMonth.dailyLog||{}), ...Object.keys(stateMonth.dailyLog||{})]);
+        allDays.forEach(function(day){
+          mergedDailyLog[day] = Object.assign({}, (baseMonth.dailyLog||{})[day]||{}, (stateMonth.dailyLog||{})[day]||{});
+        });
+        base.months[mk] = Object.assign({}, baseMonth, stateMonth, { dailyLog: mergedDailyLog });
+      });
       base.dataVersion = state.dataVersion;
       base.lastSavedAt = new Date().toISOString();
       base.lastSavedBy = 'Marketing Console (Basic)';
