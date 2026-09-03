@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Invisel — Apply Grippi Meta + Google Spend</title>
+<style>
+  body{font-family:'IBM Plex Mono',monospace;background:#0F1419;color:#E6EDEA;padding:30px;max-width:900px;margin:0 auto;}
+  h1{font-family:sans-serif;font-size:20px;color:#fff;}
+  p{font-family:sans-serif;font-size:13.5px;color:#B7C2C7;line-height:1.6;}
+  table{width:100%;border-collapse:collapse;font-size:11.5px;margin:16px 0;}
+  th,td{padding:5px 7px;border-bottom:1px solid #2A343A;text-align:right;}
+  th:first-child,td:first-child{text-align:left;}
+  th{color:#8A9AA3;font-weight:600;text-transform:uppercase;font-size:9.5px;}
+  .diff{color:#F0C868;font-weight:600;}
+  .same{color:#5A6A70;}
+  .btn{background:#0C8C82;color:#fff;border:none;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:sans-serif;}
+  .btn:hover{background:#075E57;}
+  .btn:disabled{background:#3A444A;cursor:not-allowed;}
+  #status{margin-top:16px;padding:14px 16px;border-radius:8px;font-family:sans-serif;font-size:13.5px;display:none;white-space:pre-wrap;line-height:1.6;}
+  .status-ok{background:#123324;border:1px solid #3ED598;color:#3ED598;}
+  .status-err{background:#3A1A1A;border:1px solid #FF6B6B;color:#FF6B6B;}
+  .status-progress{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;}
+  .warn{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13.5px;line-height:1.5;display:none;}
+  .note{background:#161D22;border:1px solid #2A343A;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13px;color:#B7C2C7;line-height:1.6;}
+</style>
+</head>
+<body>
+<h1>Apply Grippi Meta + Google Spend (Aug 1-23)</h1>
+<p>Source: pulled live from your connected Grippi accounts (Facebook: "Invisel Coating", Google Ads: "Invisel Products Private Limited Main Google Account") — real API data, not a manual export.</p>
+
+<div class="note">
+  <b>What this does NOT touch:</b> Website revenue stays exactly as you already have it (you asked to keep your original numbers rather than Grippi's Shopify figures). Amazon spend, Amazon revenue, and real COGS entries are also completely untouched — this only updates Meta spend and Google spend.
+</div>
+
+<div class="warn" id="protocolWarning">You appear to have opened this file directly (file://). Upload it to your GitHub repo and open it from the hosted URL instead.</div>
+
+<p id="loadingMsg">Loading current live data for comparison...</p>
+<table id="compareTable" style="display:none;">
+  <thead><tr><th>Day</th><th>Meta — Current</th><th>Meta — Grippi</th><th>Google — Current</th><th>Google — Grippi</th></tr></thead>
+  <tbody id="compareRows"></tbody>
+</table>
+
+<button class="btn" id="importBtn" onclick="runUpdate()" disabled>Loading comparison first...</button>
+<div id="status"></div>
+
+<script>
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx7Iu7XJlvEQGQRfS8gBzleETxvCeqAHtVMRty0hIHy9IKtiLo9gxP9-sGN1Xw6Gymr/exec";
+const WRITE_TOKEN = "invisel-2026-9x7q2m";
+const MONTH_KEY = "2026-08";
+
+const GRIPPI_SPEND = {"1": {"metaSpend": 88164.31, "googleSpend": 3973.4}, "2": {"metaSpend": 11112.4, "googleSpend": 8153.5}, "3": {"metaSpend": 42644.33, "googleSpend": 8368.9}, "4": {"metaSpend": 102986.61, "googleSpend": 8949.28}, "5": {"metaSpend": 101425.77, "googleSpend": 6340.51}, "6": {"metaSpend": 115387.42, "googleSpend": 4271.94}, "7": {"metaSpend": 143761.14, "googleSpend": 4287.84}, "8": {"metaSpend": 157306.53, "googleSpend": 4797.79}, "9": {"metaSpend": 169936.66, "googleSpend": 4774.0}, "10": {"metaSpend": 134795.8, "googleSpend": 4517.35}, "11": {"metaSpend": 124732.27, "googleSpend": 4863.3}, "12": {"metaSpend": 116485.82, "googleSpend": 8010.27}, "13": {"metaSpend": 101484.89, "googleSpend": 7150.33}, "14": {"metaSpend": 153804.93, "googleSpend": 10423.44}, "15": {"metaSpend": 142813.33, "googleSpend": 12524.95}, "16": {"metaSpend": 75997.2, "googleSpend": 5299.89}, "17": {"metaSpend": 46947.41, "googleSpend": 5260.49}, "18": {"metaSpend": 40530.87, "googleSpend": 6139.17}, "19": {"metaSpend": 48115.35, "googleSpend": 7050.25}, "20": {"metaSpend": 68387.54, "googleSpend": 6434.69}, "21": {"metaSpend": 113735.56, "googleSpend": 7791.96}, "22": {"metaSpend": 113418.62, "googleSpend": 7892.76}, "23": {"metaSpend": 148723.95, "googleSpend": 7838.67}};
+
+if(window.location.protocol === 'file:') document.getElementById('protocolWarning').style.display = 'block';
+
+function inr(n){ return "Rs " + Math.round(n).toLocaleString('en-IN'); }
+function cell(current, correct){
+  const differs = Math.abs(current - correct) > 0.5;
+  return "<td>" + inr(current) + "</td><td class='" + (differs?'diff':'same') + "'>" + inr(correct) + "</td>";
+}
+
+let cachedState = null;
+
+async function loadComparison(){
+  try{
+    const res = await fetch(APPS_SCRIPT_URL + '?key=invisel-console-state');
+    const data = await res.json();
+    if(!data || !data.value){ throw new Error('No state found on backend.'); }
+    cachedState = JSON.parse(data.value);
+
+    if(!cachedState.months) cachedState.months = {};
+    if(!cachedState.months[MONTH_KEY]){
+      cachedState.months[MONTH_KEY] = {
+        targets: { total: 0, shopify: 0, marketplace: 0, metaGoogleAdSpendBudget: 0, amazonAdSpendBudget: 0 },
+        mtd: { shopifyRevenue: 0, marketplaceRevenue: 0, metaGoogleSpend: 0, amazonAdsSpend: 0, b2bRevenue: 0, b2cRevenue: 0, directIncome: 0 },
+        overheads: [], dailyLog: {}
+      };
+    }
+    const m = cachedState.months[MONTH_KEY];
+    if(!m.dailyLog) m.dailyLog = {};
+
+    const tbody = document.getElementById('compareRows');
+    let anyDiff = false;
+    Object.keys(GRIPPI_SPEND).map(Number).sort((a,b)=>a-b).forEach(function(day){
+      const key = String(day);
+      const existing = m.dailyLog[key] || {};
+      const g = GRIPPI_SPEND[key];
+      const curMeta = existing.metaSpend || 0;
+      const curGoogle = existing.googleSpend || 0;
+      if(Math.abs(curMeta-g.metaSpend)>0.5 || Math.abs(curGoogle-g.googleSpend)>0.5) anyDiff = true;
+      const tr = document.createElement('tr');
+      tr.innerHTML = "<td>Aug " + day + "</td>" + cell(curMeta, g.metaSpend) + cell(curGoogle, g.googleSpend);
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('loadingMsg').style.display = 'none';
+    document.getElementById('compareTable').style.display = 'table';
+    const btn = document.getElementById('importBtn');
+    btn.disabled = false;
+    btn.textContent = anyDiff ? 'Apply Grippi Spend Data' : 'Re-apply Anyway (no differences found)';
+  }catch(e){
+    document.getElementById('loadingMsg').textContent = 'Could not load comparison: ' + e.message;
+  }
+}
+loadComparison();
+
+async function runUpdate(){
+  const btn = document.getElementById('importBtn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.style.display = 'block';
+  status.className = 'status-progress';
+  status.textContent = 'Applying Grippi spend data...';
+
+  try{
+    const state = cachedState;
+    const m = state.months[MONTH_KEY];
+
+    Object.keys(GRIPPI_SPEND).forEach(function(day){
+      if(!m.dailyLog[day]){
+        m.dailyLog[day] = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+      }
+      m.dailyLog[day].metaSpend = GRIPPI_SPEND[day].metaSpend;
+      m.dailyLog[day].googleSpend = GRIPPI_SPEND[day].googleSpend;
+      // websiteRevenue, amazonRevenue, amazonSpend, and any COGS/RTO
+      // fields are left exactly as they already are.
+    });
+
+    let sums = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+    Object.values(m.dailyLog).forEach(function(e){
+      sums.metaSpend += e.metaSpend||0;
+      sums.googleSpend += e.googleSpend||0;
+      sums.amazonSpend += e.amazonSpend||0;
+      sums.websiteRevenue += e.websiteRevenue||0;
+      sums.amazonRevenue += e.amazonRevenue||0;
+    });
+    m.mtd.shopifyRevenue = sums.websiteRevenue;
+    m.mtd.marketplaceRevenue = sums.amazonRevenue;
+    m.mtd.metaGoogleSpend = sums.metaSpend + sums.googleSpend;
+    m.mtd.amazonAdsSpend = sums.amazonSpend;
+
+    state.lastSavedAt = new Date().toISOString();
+    state.lastSavedBy = 'Grippi Meta+Google Spend Sync';
+
+    status.textContent = 'Writing to the backend...';
+    const writeRes = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'set', key:'invisel-console-state', value: JSON.stringify(state), token: WRITE_TOKEN, updatedBy: 'Grippi Meta+Google Spend Sync' })
+    });
+    const writeData = await writeRes.json();
+    if(!writeData.ok){ throw new Error('Write rejected: ' + JSON.stringify(writeData)); }
+
+    status.className = 'status-ok';
+    status.textContent = 'Success. Meta and Google spend updated for Aug 1-23 from live Grippi data.\n\n'
+      + 'August MTD Meta+Google Spend is now: ' + inr(m.mtd.metaGoogleSpend) + '\n'
+      + 'Website Revenue (unchanged): ' + inr(m.mtd.shopifyRevenue) + '\n\n'
+      + 'Amazon spend, Amazon revenue, and any real COGS/RTO entries were not touched.\n\n'
+      + 'Reload the Growth console on August 2026 to see it.';
+  }catch(e){
+    status.className = 'status-err';
+    status.textContent = 'Update failed: ' + e.message + '\n\nSafe to retry.';
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>

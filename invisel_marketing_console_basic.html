@@ -651,7 +651,28 @@ function renderOverview(){
     </tr>`;
   }).join('');
 
+  const execPaceAhead = daysElapsed>0 ? (P.mtdTotal/daysElapsed) >= P.requiredDaily : true;
+  const execMtdPct = m.targets.total? P.mtdTotal/m.targets.total : 0;
+  const gaugePct = Math.min(Math.max(execMtdPct,0),1);
+  const gaugeColor = execMtdPct>=1 ? '#3ED598' : execMtdPct>=0.85 ? '#E0B04A' : '#FF6B6B';
+
   el('panel-overview').innerHTML = `
+    <div class="grid grid-4" style="margin-bottom:18px;">
+      <div class="card kpi"><div class="label">MTD Revenue vs Target</div><div class="value">${inr(P.mtdTotal)}</div><div class="sub">${pct(execMtdPct)} of ${inrLakh(m.targets.total)}</div></div>
+      <div class="card kpi"><div class="label">Days Remaining</div><div class="value">${daysRemaining}</div><div class="sub">of ${totalDays} in ${monthLabel(activeKey)}</div></div>
+      <div class="card kpi"><div class="label">Projected Month-End</div><div class="value">${inr(P.projTotal)}</div><div class="sub">${pct(m.targets.total? P.projTotal/m.targets.total:0)} of target</div></div>
+      <div class="card kpi"><div class="label">Pace Status</div><div class="value" style="color:${execPaceAhead?'var(--good)':'var(--danger)'}">${execPaceAhead?'Ahead':'Behind'}</div><div class="sub">vs required daily run-rate</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px;">
+      <div class="label" style="margin-bottom:8px;">Target Achievement — ${monthLabel(activeKey)}</div>
+      <div style="background:var(--border);border-radius:20px;height:22px;overflow:hidden;position:relative;">
+        <div style="background:${gaugeColor};height:100%;width:${(gaugePct*100).toFixed(1)}%;border-radius:20px;transition:width 0.3s;"></div>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:${gaugePct>0.5?'#fff':'var(--ink)'};">${pct(execMtdPct)}</div>
+      </div>
+      <div class="hint" style="margin-top:6px;">${inr(P.mtdTotal)} of ${inr(m.targets.total)} MTD</div>
+    </div>
+
     <div class="card" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;">
       <label class="field" style="margin:0;">Planning month</label>
       <select onchange="switchMonth(this.value)" style="width:auto;min-width:180px;">${monthOptions}</select>

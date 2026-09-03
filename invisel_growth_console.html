@@ -128,18 +128,12 @@
     <div class="tab active" data-tab="overview" onclick="showTab('overview')">Overview & Targets</div>
     <div class="tab" data-tab="income" onclick="showTab('income')">Income Statement</div>
     <div class="tab" data-tab="margin" onclick="showTab('margin')">CM1 · CM2 · CM3</div>
-    <div class="tab" data-tab="discount" onclick="showTab('discount')">Discount Engine</div>
-    <div class="tab" data-tab="bundle" onclick="showTab('bundle')">Bundling Engine</div>
-    <div class="tab" data-tab="customer" onclick="showTab('customer')">Customer Intelligence</div>
     <div class="tab" data-tab="catalog" onclick="showTab('catalog')">SKU Catalog</div>
   </div>
 
   <div id="panel-overview" class="panel active"></div>
   <div id="panel-income" class="panel"></div>
   <div id="panel-margin" class="panel"></div>
-  <div id="panel-discount" class="panel"></div>
-  <div id="panel-bundle" class="panel"></div>
-  <div id="panel-customer" class="panel"></div>
   <div id="panel-catalog" class="panel"></div>
 
   <div class="footer-note">
@@ -652,6 +646,7 @@ function computeDailyCM3(day, monthKey){
   const totalDays = daysInMonthOf(monthKey);
   const cogsShopify = (e.shopifyCogs!==undefined && e.shopifyCogs!==null) ? e.shopifyCogs : e.websiteRevenue * a.cogsD2C;
   const cogsAmazon = (e.amazonCogs!==undefined && e.amazonCogs!==null) ? e.amazonCogs : e.amazonRevenue * a.marketplaceCogsPct;
+  const totalCogs = cogsShopify + cogsAmazon;
   const totalRevenue = e.websiteRevenue + e.amazonRevenue;
   const marketingSpend = e.metaSpend + e.googleSpend + e.amazonSpend;
   const sumCat = (cats)=> (m.overheads||[]).filter(o=>cats.includes(o.category)).reduce((s,o)=>s+o.amount,0);
@@ -660,12 +655,16 @@ function computeDailyCM3(day, monthKey){
   // not prorated.
   const directExpensesDaily = sumCat(['Direct Expense'])/totalDays;
   const techDaily = sumCat(['Technology & Platform'])/totalDays;
+  const otherIndirectDaily = sumCat(['Operating','Administrative & General','Other Indirect'])/totalDays;
+  const indirectIncomeDaily = sumCat(['Indirect Income'])/totalDays;
   const rtoShopify = (e.rtoActualShopify!==undefined && e.rtoActualShopify!==null) ? e.rtoActualShopify : e.websiteRevenue * (a.rtoProvisionPctShopify||0);
   const rtoAmazon = (e.rtoActualAmazon!==undefined && e.rtoActualAmazon!==null) ? e.rtoActualAmazon : e.amazonRevenue * (a.rtoProvisionPctAmazon||0);
-  const cm1 = totalRevenue - cogsShopify - cogsAmazon - directExpensesDaily;
+  const rtoTotal = rtoShopify + rtoAmazon;
+  const cm1 = totalRevenue - totalCogs - directExpensesDaily;
   const cm2 = cm1 - marketingSpend;
-  const cm3 = cm2 - techDaily - rtoShopify - rtoAmazon;
-  return { totalRevenue, cm3 };
+  const cm3 = cm2 - techDaily - rtoTotal;
+  const netProfit = cm3 - otherIndirectDaily + indirectIncomeDaily;
+  return { totalRevenue, totalCogs, directExpensesDaily, cm1, marketingSpend, cm2, techDaily, rtoTotal, cm3, otherIndirectDaily, indirectIncomeDaily, netProfit };
 }
 function getMonthDayInfo(monthKey, asOfDateStr){
   const totalDays = daysInMonthOf(monthKey);
@@ -946,6 +945,47 @@ function updateOverheadRow(i, key, val){
   withFocusPreserved(renderIncome);
 }
 
+/* ---------------------------------------------------------------------
+   NEXT MONTH BUDGET — plan next month's targets and overheads while
+   still viewing the current month, using the exact same editable
+   pattern as the current month's Targets and Overheads.
+--------------------------------------------------------------------- */
+function updateNextMonthTarget(key, val){
+  const nk = nextMonthKey(state.activeMonth);
+  ensureMonth(nk).targets[key] = parseFloat(val)||0;
+  queueSave();
+  withFocusPreserved(renderIncome);
+}
+function addNextMonthOverheadRow(){
+  const nk = nextMonthKey(state.activeMonth);
+  ensureMonth(nk).overheads.push({ name:"New expense", category:"Operating", amount:0 });
+  queueSave();
+  renderIncome();
+}
+function removeNextMonthOverheadRow(i){
+  const nk = nextMonthKey(state.activeMonth);
+  ensureMonth(nk).overheads.splice(i,1);
+  queueSave();
+  renderIncome();
+}
+function updateNextMonthOverheadRow(i, key, val){
+  const nk = nextMonthKey(state.activeMonth);
+  const row = ensureMonth(nk).overheads[i];
+  row[key] = key==='amount' ? (parseFloat(val)||0) : val;
+  queueSave();
+  withFocusPreserved(renderIncome);
+}
+function switchToNextMonthBudget(){
+  const nk = nextMonthKey(state.activeMonth);
+  ensureMonth(nk);
+  state.activeMonth = nk;
+  dailyEntryDay = null;
+  queueSave();
+  renderOverview();
+  renderIncome();
+  renderMargin();
+}
+
 function computeMonthProjection(monthKey){
   const s = state;
   const m = ensureMonth(monthKey);
@@ -1054,7 +1094,35 @@ function renderOverview(){
     </tr>`;
   }).join('');
 
+  const execMonthCogsRto = computeMonthCogsRto(activeKey);
+  const execAWithB2B = Object.assign({}, s.assumptions, { cogsB2C_or_B2B: s.assumptions.cogsB2B });
+  const execActualLine = computeIncomeStatementLine(
+    { shopify:m.mtd.shopifyRevenue, marketplace:m.mtd.marketplaceRevenue, b2b:m.mtd.b2bRevenue||0, b2c:m.mtd.b2cRevenue||0, directIncome:m.mtd.directIncome||0 },
+    P.mtdSpend, m.overheads||[], execAWithB2B,
+    { cogsShopify: execMonthCogsRto.cogsShopify, cogsMarketplace: execMonthCogsRto.cogsMarketplace, rtoShopify: execMonthCogsRto.rtoShopify, rtoAmazon: execMonthCogsRto.rtoAmazon }
+  );
+  const execPaceAhead = daysElapsed>0 ? (P.mtdTotal/daysElapsed) >= P.requiredDaily : true;
+
+  // CM3 alert — flag when CM3 has been negative for 3+ of the last 5
+  // logged days, so a bad stretch surfaces on its own instead of
+  // requiring someone to spot it in a trend chart.
+  const execLoggedDays = Object.keys(m.dailyLog).map(Number).sort((a,b)=>a-b);
+  const execLast5 = execLoggedDays.slice(-5);
+  const execLast5Cm3 = execLast5.map(d=>computeDailyCM3(d, activeKey)).filter(Boolean);
+  const execNegativeDays = execLast5Cm3.filter(dp=>dp.cm3<0).length;
+  const cm3AlertHtml = execNegativeDays>=3
+    ? `<div class="assumption-note" style="border-color:var(--danger);background:var(--danger-soft);color:var(--danger);margin-bottom:14px;"><b>CM3 has been negative on ${execNegativeDays} of the last ${execLast5Cm3.length} logged days.</b> Check the Daily P&L table in Income Statement to see which days and why.</div>`
+    : '';
+
   el('panel-overview').innerHTML = `
+    ${cm3AlertHtml}
+    <div class="grid grid-4" style="margin-bottom:18px;">
+      <div class="card kpi"><div class="label">MTD Revenue vs Target</div><div class="value">${inr(P.mtdTotal)}</div><div class="sub">${pct(m.targets.total? P.mtdTotal/m.targets.total:0)} of ${inrLakh(m.targets.total)}</div></div>
+      <div class="card kpi"><div class="label">MTD CM3</div><div class="value" style="color:${execActualLine.cm3<0?'var(--danger)':'var(--good)'}">${inr(execActualLine.cm3)}</div><div class="sub">${pct(execActualLine.cm3pct)} of revenue</div></div>
+      <div class="card kpi"><div class="label">Days Remaining</div><div class="value">${daysRemaining}</div><div class="sub">of ${totalDays} in ${monthLabel(activeKey)}</div></div>
+      <div class="card kpi"><div class="label">Pace Status</div><div class="value" style="color:${execPaceAhead?'var(--good)':'var(--danger)'}">${execPaceAhead?'Ahead':'Behind'}</div><div class="sub">vs required daily run-rate</div></div>
+    </div>
+
     <div class="card" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;">
       <label class="field" style="margin:0;">Planning month</label>
       <select onchange="switchMonth(this.value)" style="width:auto;min-width:180px;">${monthOptions}</select>
@@ -1550,6 +1618,85 @@ function renderIncome(){
 
         <div class="section-title" style="margin-top:16px;">CM3 Trend <span class="n">last ${last7Days.length} logged day${last7Days.length===1?'':'s'}</span></div>
         <div class="card">${cm3TrendHtml}</div>
+
+        <div class="section-title" style="margin-top:16px;">Daily P&amp;L <span class="n">every logged day — revenue through CM3</span></div>
+        <div class="assumption-note">Overheads (Direct Expenses, Tech, Other Indirect) are the monthly figure divided evenly across the month's days — real numbers for revenue, spend, COGS, and RTO where you've entered them.</div>
+        ${loggedDays.length===0 ? '<div class="hint">No days logged yet this month.</div>' : `
+        <div class="tablewrap"><table>
+          <thead><tr><th>Day</th><th class="num">Revenue</th><th class="num">COGS</th><th class="num">Direct Exp</th><th class="num">CM1</th><th class="num">Ad Spend</th><th class="num">CM2</th><th class="num">Tech</th><th class="num">RTO</th><th class="num">CM3</th></tr></thead>
+          <tbody>${loggedDays.map(d=>{
+            const dp = computeDailyCM3(d, activeKey);
+            return `<tr>
+              <td>${monthLabel(activeKey).split(' ')[0]} ${d}</td>
+              <td class="num">${inr(dp.totalRevenue)}</td>
+              <td class="num">${inr(dp.totalCogs)}</td>
+              <td class="num">${inr(dp.directExpensesDaily)}</td>
+              <td class="num">${inr(dp.cm1)}</td>
+              <td class="num">${inr(dp.marketingSpend)}</td>
+              <td class="num">${inr(dp.cm2)}</td>
+              <td class="num">${inr(dp.techDaily)}</td>
+              <td class="num">${inr(dp.rtoTotal)}</td>
+              <td class="num" style="color:${dp.cm3<0?'var(--danger)':'inherit'};font-weight:600;">${inr(dp.cm3)}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table></div>
+        `}
+      `;
+    })()}
+
+    ${(function(){
+      const nextKey = nextMonthKey(activeKey);
+      const nextExists = !!state.months[nextKey];
+      if(!nextExists){
+        return `
+          <div class="section-title" style="margin-top:16px;">Next Month Budget <span class="n">${monthLabel(nextKey)}</span></div>
+          <div class="card">
+            <div class="hint" style="margin-bottom:10px;">Plan ${monthLabel(nextKey)}'s targets and overheads now, without leaving ${monthLabel(activeKey)}.</div>
+            <button class="btn small" onclick="ensureMonth('${nextKey}'); queueSave(); renderIncome();">Start Planning ${monthLabel(nextKey)}</button>
+          </div>
+        `;
+      }
+      const nm = state.months[nextKey];
+      if(nm.targets.metaGoogleAdSpendBudget===undefined) nm.targets.metaGoogleAdSpendBudget = 0;
+      if(nm.targets.amazonAdSpendBudget===undefined) nm.targets.amazonAdSpendBudget = 0;
+      if(!nm.overheads) nm.overheads = [];
+      const nmOverheadRows = nm.overheads.map((o,i)=>`<tr>
+        <td><input type="text" value="${o.name}" oninput="updateNextMonthOverheadRow(${i},'name',this.value)" style="width:100%"/></td>
+        <td>
+          <select onchange="updateNextMonthOverheadRow(${i},'category',this.value)">
+            ${['Direct Expense','Technology & Platform','Operating','Administrative & General','Other Indirect','Indirect Income'].map(c=>`<option value="${c}" ${o.category===c?'selected':''}>${c}</option>`).join('')}
+          </select>
+        </td>
+        <td class="num"><input type="number" value="${o.amount}" oninput="updateNextMonthOverheadRow(${i},'amount',this.value)" style="width:110px"/></td>
+        <td><button class="btn ghost small" onclick="removeNextMonthOverheadRow(${i})">remove</button></td>
+      </tr>`).join('');
+      const nmTotalOverheads = nm.overheads.reduce((s,o)=>s+(o.amount||0),0);
+      const nmTotalAdBudget = (nm.targets.metaGoogleAdSpendBudget||0)+(nm.targets.amazonAdSpendBudget||0);
+
+      return `
+        <div class="section-title" style="margin-top:16px;">Next Month Budget <span class="n">${monthLabel(nextKey)} — same editable pattern as ${monthLabel(activeKey)}</span></div>
+        <div class="assumption-note">Planning ahead — this doesn't affect ${monthLabel(activeKey)}. Once ${monthLabel(nextKey)} actually starts, switch to it from the month selector at the top (or the button below) and it becomes the live active month, same as any other.</div>
+
+        <div class="grid grid-3">
+          <div class="card"><label class="field">Total Revenue Target (₹)</label><input type="number" value="${nm.targets.total}" oninput="updateNextMonthTarget('total', this.value)"/><div class="hint">${inrLakh(nm.targets.total)}</div></div>
+          <div class="card"><label class="field">Shopify Target (₹)</label><input type="number" value="${nm.targets.shopify}" oninput="updateNextMonthTarget('shopify', this.value)"/><div class="hint">${inrLakh(nm.targets.shopify)}</div></div>
+          <div class="card"><label class="field">Marketplace Target (₹)</label><input type="number" value="${nm.targets.marketplace}" oninput="updateNextMonthTarget('marketplace', this.value)"/><div class="hint">${inrLakh(nm.targets.marketplace)}</div></div>
+          <div class="card"><label class="field">Meta+Google Ad Spend Budget (₹)</label><input type="number" value="${nm.targets.metaGoogleAdSpendBudget}" oninput="updateNextMonthTarget('metaGoogleAdSpendBudget', this.value)"/><div class="hint">${inrLakh(nm.targets.metaGoogleAdSpendBudget)}</div></div>
+          <div class="card"><label class="field">Amazon Ad Spend Budget (₹)</label><input type="number" value="${nm.targets.amazonAdSpendBudget}" oninput="updateNextMonthTarget('amazonAdSpendBudget', this.value)"/><div class="hint">${inrLakh(nm.targets.amazonAdSpendBudget)}</div></div>
+          <div class="card kpi"><div class="label">Total Planned Ad Spend</div><div class="value">${inr(nmTotalAdBudget)}</div></div>
+        </div>
+
+        <div class="section-title" style="margin-top:14px;">${monthLabel(nextKey)} Overheads</div>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Name</th><th>Category</th><th class="num">Monthly Amount (₹)</th><th></th></tr></thead>
+          <tbody>${nmOverheadRows}</tbody>
+        </table></div>
+        <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;">
+          <button class="btn ghost small" onclick="addNextMonthOverheadRow()">+ Add expense line</button>
+          <div class="hint">Total planned overheads: <b>${inr(nmTotalOverheads)}</b></div>
+        </div>
+
+        <button class="btn small" style="margin-top:14px;" onclick="switchToNextMonthBudget()">Switch to ${monthLabel(nextKey)} as Active Month</button>
       `;
     })()}
   `;
@@ -1626,553 +1773,6 @@ function renderMargin(){
 }
 
 /* ---------------------------------------------------------------------
-   DISCOUNT ENGINE
---------------------------------------------------------------------- */
-let discountSelectedId = CATALOG[0].id;
-let discountPct = 20;
-function setDiscountSku(id){ discountSelectedId = id; renderDiscount(); }
-function setDiscountPct(v){ discountPct = clamp(parseFloat(v)||0,0,90); withFocusPreserved(renderDiscount); }
-function setDiscountFloor(v){ state.discountFloorPct = clamp((parseFloat(v)||0)/100,0,1); queueSave(); withFocusPreserved(renderDiscount); }
-
-function renderDiscount(){
-  const sku = CATALOG.find(c=>c.id===discountSelectedId);
-  const floor = state.discountFloorPct;
-  const baseMarginRs = sku.price - sku.cogs;
-  const baseMarginPct = baseMarginRs/sku.price;
-  const newPrice = sku.price*(1-discountPct/100);
-  const newMarginRs = newPrice - sku.cogs;
-  const newMarginPct = newPrice>0 ? newMarginRs/newPrice : -1;
-  const breachesFloor = newMarginPct < floor;
-  const volLiftProfit = (newMarginRs>0 && baseMarginRs>0) ? (baseMarginRs/newMarginRs - 1)*100 : null;
-  const volLiftRevenue = newPrice>0 ? (sku.price/newPrice - 1)*100 : null;
-  const heroMatch = REAL_TOP_PRODUCTS.find(p=>p.catalogId===sku.id);
-
-  const options = CATALOG.map(c=>`<option value="${c.id}" ${c.id===discountSelectedId?'selected':''}>${c.name}</option>`).join('');
-
-  const batchRows = CATALOG.map(c=>{
-    const np = c.price*(1-discountPct/100);
-    const nm = np>0 ? (np-c.cogs)/np : -1;
-    const breach = nm < floor;
-    return `<tr>
-      <td>${c.name} ${c.cogsEstimated?'<span class="badge warn">verify</span>':''}</td>
-      <td class="num">${inr(c.price)}</td>
-      <td class="num">${inr(np)}</td>
-      <td class="num">${pct((c.price-c.cogs)/c.price)}</td>
-      <td class="num" style="color:${breach?'var(--danger)':'inherit'}">${pct(nm)}</td>
-      <td>${breach? '<span class="badge bad">below floor</span>' : '<span class="badge good">ok</span>'}</td>
-    </tr>`;
-  }).join('');
-
-  el('panel-discount').innerHTML = `
-    <div class="section-title">Single-SKU Discount Simulator</div>
-    <div class="grid grid-3">
-      <div class="card">
-        <label class="field">SKU</label>
-        <select onchange="setDiscountSku(this.value)">${options}</select>
-        <div class="hint">Base price ${inr(sku.price)} · COGS ${inr(sku.cogs)} ${sku.cogsEstimated?'<span class="badge warn">verify</span>':''}</div>
-      </div>
-      <div class="card">
-        <label class="field">Discount %</label>
-        <input type="number" value="${discountPct}" min="0" max="90" step="1" data-fid="discount-pct" oninput="setDiscountPct(this.value)"/>
-        <div class="hint">New price: <b>${inr(newPrice)}</b></div>
-      </div>
-      <div class="card">
-        <label class="field">Margin Floor % (alert threshold)</label>
-        <input type="number" value="${(floor*100).toFixed(0)}" min="0" max="90" data-fid="discount-floor" oninput="setDiscountFloor(this.value)"/>
-        <div class="hint">Applies to both single-SKU and batch views below</div>
-      </div>
-    </div>
-    ${heroMatch? `<div class="assumption-note" style="border-color:var(--warn);background:var(--warn-soft);color:var(--warn);margin-top:12px;">This is one of your top revenue products in the real analysis: <b>${inr(heroMatch.revenue)}</b> over the period (${heroMatch.orders.toLocaleString('en-IN')} orders)${heroMatch.shareOfRevenue? ', '+pct(heroMatch.shareOfRevenue)+' of total revenue on its own':''}. A small % move here has an outsized ₹ impact — model the volume lift below carefully before running it.</div>` : ''}
-
-    <div class="grid grid-4" style="margin-top:14px;">
-      <div class="card kpi"><div class="label">Base Margin</div><div class="value">${inr(baseMarginRs)}</div><div class="sub">${pct(baseMarginPct)} of price</div></div>
-      <div class="card kpi"><div class="label">New Margin</div><div class="value" style="color:${breachesFloor?'var(--danger)':'inherit'}">${inr(newMarginRs)}</div><div class="sub">${pct(newMarginPct)} of new price ${breachesFloor?'<span class="badge bad">below floor</span>':''}</div></div>
-      <div class="card kpi"><div class="label">Volume Lift to Hold Total Profit</div><div class="value">${volLiftProfit!==null? '+'+volLiftProfit.toFixed(0)+'%':'—'}</div><div class="sub">extra units vs. today, same total ₹ profit</div></div>
-      <div class="card kpi"><div class="label">Volume Lift to Hold Total Revenue</div><div class="value">${volLiftRevenue!==null? '+'+volLiftRevenue.toFixed(0)+'%':'—'}</div><div class="sub">extra units to keep top-line flat</div></div>
-    </div>
-    ${breachesFloor? `<div class="assumption-note" style="border-color:var(--danger);color:var(--danger);background:var(--danger-soft);margin-top:12px;">This discount takes margin below your ${pct(floor)} floor. Needs a <b>${volLiftProfit!==null?volLiftProfit.toFixed(0)+'%':'large'}</b> volume increase just to protect total ₹ profit — check that's realistic for this SKU before running it festive-wide.</div>` : ''}
-
-    <div class="section-title">Blanket Discount — Whole Catalog at ${discountPct}%</div>
-    <div class="tablewrap">
-    <table>
-      <thead><tr><th>SKU</th><th class="num">Current Price</th><th class="num">New Price</th><th class="num">Current Margin %</th><th class="num">New Margin %</th><th>Status</th></tr></thead>
-      <tbody>${batchRows}</tbody>
-    </table>
-    </div>
-  `;
-}
-
-/* ---------------------------------------------------------------------
-   BUNDLING ENGINE
---------------------------------------------------------------------- */
-let bundleSelection = new Set([CATALOG[0].id, CATALOG[7].id]);
-let bundleDiscountPct = 20;
-function toggleBundleItem(id, checked){ if(checked) bundleSelection.add(id); else bundleSelection.delete(id); renderBundle(); }
-function setBundleDiscount(v){ bundleDiscountPct = clamp(parseFloat(v)||0,0,90); withFocusPreserved(renderBundle); }
-function setBundleFloor(v){ state.bundleFloorPct = clamp((parseFloat(v)||0)/100,0,1); queueSave(); withFocusPreserved(renderBundle); }
-
-function renderBundle(){
-  const items = CATALOG.filter(c=>bundleSelection.has(c.id));
-  const separateTotal = items.reduce((s,c)=>s+c.price,0);
-  const bundleCogs = items.reduce((s,c)=>s+c.cogs,0);
-  const bundlePrice = separateTotal*(1-bundleDiscountPct/100);
-  const bundleMarginRs = bundlePrice - bundleCogs;
-  const bundleMarginPct = bundlePrice>0? bundleMarginRs/bundlePrice : -1;
-  const savings = separateTotal - bundlePrice;
-  const floor = state.bundleFloorPct;
-  const breach = bundleMarginPct < floor;
-
-  const checklist = CATALOG.map(c=>`
-    <div class="checkline">
-      <input type="checkbox" ${bundleSelection.has(c.id)?'checked':''} onchange="toggleBundleItem('${c.id}', this.checked)"/>
-      <span style="flex:1">${c.name}</span>
-      <span class="mono hint">${inr(c.price)}</span>
-    </div>`).join('');
-
-  const officialRows = OFFICIAL_BUNDLE_DISCOUNTS.map(b=>{
-    const cat = CATALOG.find(c=>c.id===b.id);
-    return `<tr><td>${b.name}</td><td>${b.claimed}</td><td class="num">${cat? inr(cat.price):'—'}</td><td class="num">${cat? pct((cat.price-cat.cogs)/cat.price):'—'}</td></tr>`;
-  }).join('');
-
-  const glassRemoverBothSelected = bundleSelection.has('glass250') && bundleSelection.has('hwsr250');
-
-  el('panel-bundle').innerHTML = `
-    ${glassRemoverBothSelected? `<div class="assumption-note" style="border-color:var(--warn);background:var(--warn-soft);color:var(--warn);">Per your executive analysis, Glass Protector + Hardwater Stain Remover already sells as a combo at full price (₹9.2M across 5,702 orders). Check whether this pairing needs a discount at all before you set one.</div>` : ''}
-    <div class="grid" style="grid-template-columns:1.1fr 1.4fr;gap:16px;">
-      <div class="card">
-        <label class="field">Pick SKUs for the bundle</label>
-        <div class="tablewrap" style="max-height:360px;">${checklist}</div>
-      </div>
-      <div>
-        <div class="grid grid-2">
-          <div class="card"><label class="field">Bundle Discount % (off sum of parts)</label><input type="number" value="${bundleDiscountPct}" min="0" max="90" data-fid="bundle-pct" oninput="setBundleDiscount(this.value)"/></div>
-          <div class="card"><label class="field">Margin Floor %</label><input type="number" value="${(floor*100).toFixed(0)}" data-fid="bundle-floor" oninput="setBundleFloor(this.value)"/></div>
-        </div>
-        <div class="grid grid-3" style="margin-top:12px;">
-          <div class="card kpi"><div class="label">Sum of Parts</div><div class="value">${inr(separateTotal)}</div></div>
-          <div class="card kpi"><div class="label">Bundle Price</div><div class="value">${inr(bundlePrice)}</div><div class="sub">saves ${inr(savings)}</div></div>
-          <div class="card kpi"><div class="label">Bundle Margin</div><div class="value" style="color:${breach?'var(--danger)':'inherit'}">${pct(bundleMarginPct)}</div><div class="sub">${breach?'<span class="badge bad">below floor</span>':'<span class="badge good">above floor</span>'}</div></div>
-        </div>
-        ${breach? `<div class="assumption-note" style="border-color:var(--danger);color:var(--danger);background:var(--danger-soft);">This bundle configuration falls below your ${pct(floor)} margin floor. Reduce the discount % or swap a lower-COGS item in.</div>` : ''}
-        <div class="section-title">Your Existing Kits — for Pattern Reference</div>
-        <div class="tablewrap">
-          <table>
-            <thead><tr><th>Kit</th><th>Site Claim</th><th class="num">Price</th><th class="num">Actual Margin %</th></tr></thead>
-            <tbody>${officialRows}</tbody>
-          </table>
-        </div>
-        <div class="hint">Claims are from invisel.in product copy; margin % is computed from the catalog price/COGS in this tool, not from the site.</div>
-      </div>
-      
-    </div>
-  `;
-}
-
-/* ---------------------------------------------------------------------
-   CUSTOMER INTELLIGENCE (RETENTION + UPSELL)
---------------------------------------------------------------------- */
-function categoryFromProductName(name){
-  const n = (name||'').toLowerCase();
-  if(n.includes('sofa')||n.includes('fabric')) return 'Fabric';
-  if(n.includes('leather')) return 'Leather';
-  if(n.includes('wood')) return 'Wood';
-  if(n.includes('marble')||n.includes('granite')) return 'Marble';
-  if(n.includes('glass')) return 'Glass';
-  if(n.includes('kitchen')) return 'Kitchen';
-  if(n.includes('copper')||n.includes('brass')) return 'Copper';
-  if(n.includes('bathroom')||n.includes('tap')||n.includes('hardwater')||n.includes('hard water')) return 'Bathroom';
-  if(n.includes('multi-surface')||n.includes('multi surface')) return 'Cleaner';
-  return 'Other';
-}
-function detectColumns(fields){
-  const lower = fields.map(f=>f.toLowerCase());
-  function find(keys){ for(const k of keys){ const idx = lower.findIndex(f=>f.includes(k)); if(idx>=0) return fields[idx]; } return null; }
-  return {
-    customer: find(['email','customer id','customer_id','phone','customer']),
-    date: find(['order date','date','created at','order_date']),
-    order: find(['order id','order_id','order name','order number','order']),
-    product: find(['product','sku','item','line item','title']),
-    qty: find(['qty','quantity']),
-    amount: find(['line total','total','amount','price','subtotal','net']),
-  };
-}
-function handleCsvFile(file){
-  if(!file) return;
-  el('csvStatus').textContent = 'Parsing ' + file.name + '…';
-  Papa.parse(file, {
-    header:true, skipEmptyLines:true,
-    complete: function(results){
-      try{
-        const fields = results.meta.fields || [];
-        const cols = detectColumns(fields);
-        const missing = ['customer','date','product'].filter(k=>!cols[k]);
-        if(missing.length){
-          el('csvStatus').innerHTML = `Could not find column(s) for: <b>${missing.join(', ')}</b>. Found headers: ${fields.join(', ')}. Rename columns and re-upload.`;
-          return;
-        }
-        sampleSummary = null;
-        computeCustomerSummary(results.data, cols);
-        el('csvStatus').textContent = 'Loaded ' + results.data.length + ' rows from ' + file.name;
-        renderCustomer();
-      }catch(e){
-        el('csvStatus').textContent = 'Could not process file: ' + e.message;
-      }
-    },
-    error: function(err){ el('csvStatus').textContent = 'Parse error: ' + err.message; }
-  });
-}
-function summarizeRows(rows, cols, asOfDateStr){
-  const asOf = new Date(asOfDateStr+"T00:00:00");
-  const byCustomer = {};
-  const catPairs = {}; // co-purchase counts
-  rows.forEach(r=>{
-    const cust = (r[cols.customer]||'').trim();
-    if(!cust) return;
-    const dateStr = r[cols.date];
-    const d = dateStr ? new Date(dateStr) : null;
-    const amount = cols.amount ? parseFloat((r[cols.amount]||'0').toString().replace(/[^0-9.\-]/g,'')) || 0 : 0;
-    const product = cols.product ? r[cols.product] : '';
-    const cat = categoryFromProductName(product);
-    if(!byCustomer[cust]) byCustomer[cust] = { orders:new Set(), spend:0, firstDate:d, lastDate:d, categories:new Set() };
-    const c = byCustomer[cust];
-    if(cols.order && r[cols.order]) c.orders.add(r[cols.order]); else c.orders.add(cust+'|'+dateStr);
-    c.spend += amount;
-    c.categories.add(cat);
-    if(d && !isNaN(d)){
-      if(!c.firstDate || d<c.firstDate) c.firstDate = d;
-      if(!c.lastDate || d>c.lastDate) c.lastDate = d;
-    }
-  });
-
-  Object.values(byCustomer).forEach(c=>{
-    const cats = Array.from(c.categories);
-    for(let i=0;i<cats.length;i++){
-      for(let j=0;j<cats.length;j++){
-        if(i===j) continue;
-        const key = cats[i]+' → '+cats[j];
-        catPairs[key] = (catPairs[key]||0)+1;
-      }
-    }
-  });
-
-  const segments = { Champions:0, Loyal:0, "At Risk":0, New:0, Lapsed:0, Occasional:0 };
-  const segmentSpend = { Champions:0, Loyal:0, "At Risk":0, New:0, Lapsed:0, Occasional:0 };
-  let totalCustomers = 0, repeatCustomers = 0, totalSpend = 0;
-
-  Object.values(byCustomer).forEach(c=>{
-    totalCustomers++;
-    const freq = c.orders.size;
-    totalSpend += c.spend;
-    if(freq>=2) repeatCustomers++;
-    const recencyDays = (c.lastDate && !isNaN(c.lastDate)) ? Math.round((asOf-c.lastDate)/86400000) : null;
-    let seg = 'Occasional';
-    if(recencyDays===null) seg = 'Occasional';
-    else if(freq>=3 && recencyDays<=60) seg = 'Champions';
-    else if(freq>=2 && recencyDays<=120) seg = 'Loyal';
-    else if(freq>=2 && recencyDays>120) seg = 'At Risk';
-    else if(freq===1 && recencyDays<=30) seg = 'New';
-    else if(recencyDays>180) seg = 'Lapsed';
-    segments[seg]++;
-    segmentSpend[seg]+=c.spend;
-  });
-
-  const topPairs = Object.entries(catPairs).sort((a,b)=>b[1]-a[1]).slice(0,8);
-
-  return {
-    computedAt: new Date().toISOString(),
-    totalCustomers, repeatCustomers, totalSpend,
-    repeatRate: totalCustomers? repeatCustomers/totalCustomers : 0,
-    segments, segmentSpend, topPairs
-  };
-}
-function computeCustomerSummary(rows, cols){
-  customerSummary = summarizeRows(rows, cols, state.asOfDate);
-  saveCustomerSummary();
-}
-
-/* Clearly-labeled synthetic preview data — never treated as real, never saved
-   to shared storage. Exists only so the team can see what this tab looks like
-   before real order data is uploaded. */
-const SAMPLE_COLS = { customer:"Email", date:"Order Date", order:"Order Name", product:"Line Item", qty:"Quantity", amount:"Total" };
-const SAMPLE_ROWS = [
-  {Email:"demo1@example.com","Order Date":"2026-03-10","Line Item":"3 Seater Sofa Protector Combo",Total:"1999","Order Name":"#S1001"},
-  {Email:"demo1@example.com","Order Date":"2026-05-20","Line Item":"Fabric Stain Remover 250ml",Total:"599","Order Name":"#S1044"},
-  {Email:"demo1@example.com","Order Date":"2026-07-25","Line Item":"Wood Protector and Enhancer 250ml",Total:"999","Order Name":"#S1102"},
-  {Email:"demo2@example.com","Order Date":"2026-05-01","Line Item":"Marble & Granite Stain Repellent 250ml",Total:"1199","Order Name":"#S1030"},
-  {Email:"demo2@example.com","Order Date":"2026-06-15","Line Item":"Multi-Surface Cleaner 250ml",Total:"501","Order Name":"#S1067"},
-  {Email:"demo3@example.com","Order Date":"2026-01-15","Line Item":"Glass & Tile Hard Water Stain Repellent 250ml",Total:"1299","Order Name":"#S0910"},
-  {Email:"demo3@example.com","Order Date":"2026-03-01","Line Item":"Hardwater Stain Remover 250ml",Total:"501","Order Name":"#S0955"},
-  {Email:"demo4@example.com","Order Date":"2026-07-20","Line Item":"Leather Protector and Enhancer 250ml",Total:"1099","Order Name":"#S1098"},
-  {Email:"demo5@example.com","Order Date":"2026-01-05","Line Item":"Kitchen Protector Kit",Total:"1999","Order Name":"#S0902"},
-  {Email:"demo6@example.com","Order Date":"2026-04-10","Line Item":"Copper & Brass Shine Protector 150ml",Total:"799","Order Name":"#S1005"},
-  {Email:"demo7@example.com","Order Date":"2026-02-01","Line Item":"3 Seater Sofa Protector Combo",Total:"1999","Order Name":"#S0930"},
-  {Email:"demo7@example.com","Order Date":"2026-04-01","Line Item":"Fabric Stain Remover 250ml",Total:"599","Order Name":"#S0988"},
-  {Email:"demo7@example.com","Order Date":"2026-06-01","Line Item":"Marble & Granite Stain Repellent 250ml",Total:"1199","Order Name":"#S1050"},
-  {Email:"demo7@example.com","Order Date":"2026-07-28","Line Item":"Wood Protector and Enhancer 250ml",Total:"999","Order Name":"#S1105"},
-  {Email:"demo8@example.com","Order Date":"2026-06-01","Line Item":"Taps and Fittings Protector Combo",Total:"1199","Order Name":"#S1051"},
-  {Email:"demo8@example.com","Order Date":"2026-07-10","Line Item":"Hardwater Stain Remover 250ml",Total:"501","Order Name":"#S1085"},
-  {Email:"demo9@example.com","Order Date":"2026-02-01","Line Item":"Glass & Tile Hard Water Stain Repellent 250ml",Total:"1299","Order Name":"#S0931"},
-  {Email:"demo9@example.com","Order Date":"2026-02-20","Line Item":"Marble & Granite Stain Repellent 250ml",Total:"1199","Order Name":"#S0942"},
-  {Email:"demo10@example.com","Order Date":"2026-07-29","Line Item":"Kitchen Stain Remover 250ml (Pack of 1)",Total:"399","Order Name":"#S1107"},
-  {Email:"demo11@example.com","Order Date":"2026-01-02","Line Item":"Bathroom Protector Kit",Total:"2599","Order Name":"#S0900"},
-  {Email:"demo12@example.com","Order Date":"2026-05-15","Line Item":"Mini Wood Protector 150ml",Total:"499","Order Name":"#S1035"}
-];
-function loadSampleData(){
-  sampleSummary = summarizeRows(SAMPLE_ROWS, SAMPLE_COLS, state.asOfDate);
-  renderCustomer();
-}
-function clearSampleData(){ sampleSummary = null; renderCustomer(); }
-function renderCustomer(){
-  const R = REAL_ANALYSIS;
-
-  const segCardsReal = REAL_SEGMENTS.map(s=>`
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;">
-        <b>${s.name}</b><span class="mono hint">${s.customers} cust.</span>
-      </div>
-      <div class="grid grid-4" style="margin-top:8px;">
-        <div><div class="hint">Revenue</div><div class="mono">${inr(s.revenue)}</div></div>
-        <div><div class="hint">AOV</div><div class="mono">${inr(s.aov)}</div></div>
-        <div><div class="hint">Avg orders</div><div class="mono">${s.avgOrders}</div></div>
-        <div><div class="hint">Avg days since last order</div><div class="mono">${s.recencyDays}</div></div>
-      </div>
-      <div class="hint" style="margin-top:8px;">${s.strategy}</div>
-    </div>
-  `).join('');
-
-  const topProductRows = REAL_TOP_PRODUCTS.map(p=>{
-    const cat = p.catalogId ? CATALOG.find(c=>c.id===p.catalogId) : null;
-    return `<tr>
-      <td>${p.name}${p.shareOfRevenue? ' <span class="badge warn">'+pct(p.shareOfRevenue)+' of total revenue</span>':''}</td>
-      <td class="num">${inr(p.revenue)}</td>
-      <td class="num">${p.orders.toLocaleString('en-IN')}</td>
-      <td class="num">${inr(p.aov)}</td>
-      <td class="num">${cat? inr(cat.price)+ (cat.cogs? ' · '+pct((cat.price-cat.cogs)/cat.price)+' margin':'') : '—'}</td>
-    </tr>`;
-  }).join('');
-
-  const channelRows = REAL_CHANNELS.map(c=>`<tr><td>${c.channel}</td><td class="num">${inr(c.revenue)}</td><td class="num">${c.orders.toLocaleString('en-IN')}</td><td class="num">${pct(c.share)}</td></tr>`).join('');
-
-  const loyaltyRows = REAL_LOYALTY_TIERS.map(t=>`<tr><td><b>${t.tier}</b></td><td>${t.qualification}</td><td>${t.benefits}</td></tr>`).join('');
-  const bundleOppRows = REAL_BUNDLE_OPPORTUNITIES.map(b=>`<tr><td><b>${b.name}</b></td><td>${b.components}</td><td class="hint">${b.note}</td></tr>`).join('');
-  const recRows = REAL_RECOMMENDATIONS.map(r=>`<tr><td class="num">${r.rank}</td><td>${r.rec}</td><td class="num">${r.impact}</td><td>${r.effort}</td></tr>`).join('');
-  const gapItems = REAL_DATA_GAPS.map(g=>`<li>${g}</li>`).join('');
-
-  const liveJourneyRows = REAL_LIVE_JOURNEYS.map(j=>`<tr>
-    <td>${j.name}</td>
-    <td class="num">${j.recipients.toLocaleString('en-IN')}</td>
-    <td class="num">${inr(j.revenue)}</td>
-    <td class="num">${j.conversions} <span class="hint">(${j.convRate}%)</span></td>
-    <td class="num">${j.readRate}%</td>
-    <td class="num">${j.clickRate}%</td>
-  </tr>`).join('');
-  const draftJourneyRows = REAL_DRAFT_JOURNEYS.map(j=>`<tr>
-    <td>${j.name}</td>
-    <td class="num">${j.recipients.toLocaleString('en-IN')}</td>
-    <td class="num">${inr(j.revenue)}</td>
-    <td class="num">${j.conversions} <span class="hint">(${j.convRate}%)</span></td>
-    <td class="hint">${j.note}</td>
-  </tr>`).join('');
-  const broadcastTopRows = REAL_BROADCAST_TOP.map(b=>`<tr><td>${b.name}</td><td class="num">${b.roi.toFixed(2)}x</td><td class="num">${inr(b.revenue)}</td><td class="num">${inr(b.cost)}</td></tr>`).join('');
-  const broadcastZeroRows = REAL_BROADCAST_ZERO.map(b=>`<tr><td>${b.name}</td><td class="num">${b.sent.toLocaleString('en-IN')}</td><td class="num">${b.delivered.toLocaleString('en-IN')}</td><td class="num">${inr(b.cost)}</td></tr>`).join('');
-
-  const rulesRows = state.retentionRules.map((r,i)=>`
-    <tr>
-      <td>${r.category}</td>
-      <td><input type="number" value="${r.months}" step="0.5" style="width:70px" oninput="updateRetentionRule(${i},'months',this.value)"/> mo</td>
-      <td><input type="text" value="${r.crossSell}" oninput="updateRetentionRule(${i},'crossSell',this.value)"/></td>
-    </tr>`).join('');
-
-  const playbookRows = state.offerPlaybook.map((p,i)=>`
-    <tr>
-      <td><b>${p.segment}</b><div class="hint">${p.trigger}</div></td>
-      <td><input type="text" value="${p.action}" style="width:100%" oninput="updateOfferPlaybook(${i},'action',this.value)"/></td>
-      <td><input type="text" value="${p.discount}" style="width:170px" oninput="updateOfferPlaybook(${i},'discount',this.value)"/></td>
-    </tr>`).join('');
-
-  function segmentAffinityBlock(s, isSample){
-    const segCards = Object.keys(s.segments).map(seg=>`
-      <div class="card kpi"><div class="label">${seg}</div><div class="value">${s.segments[seg]}</div><div class="sub">${pct(s.totalCustomers? s.segments[seg]/s.totalCustomers:0)} · ${inr(s.segmentSpend[seg])} spend</div></div>
-    `).join('');
-    const pairRows = s.topPairs.map(([k,v])=>`<tr><td>${k}</td><td class="num">${v} customers</td></tr>`).join('') || '<tr><td colspan="2">Not enough multi-category customers yet.</td></tr>';
-    return `
-      ${isSample
-        ? `<div class="assumption-note" style="border-color:var(--warn);background:var(--warn-soft);color:var(--warn);"><b>SAMPLE DATA</b> — synthetic 12-customer example, not saved, not your real customers. <button class="btn ghost small" onclick="clearSampleData()">Clear sample</button></div>`
-        : `<div class="hint" style="margin-bottom:10px;">Recomputed from your latest upload at ${new Date(s.computedAt).toLocaleString()} · ${s.totalCustomers} customers · ${inr(s.totalSpend)} total spend · repeat purchase rate <b>${pct(s.repeatRate)}</b></div>`
-      }
-      <div class="grid grid-4">${segCards}</div>
-      <div class="section-title">Cross-Category Affinity ${isSample?'(sample)':'(data-driven)'}</div>
-      <div class="tablewrap"><table><thead><tr><th>Category pair</th><th class="num">Customers who bought both</th></tr></thead><tbody>${pairRows}</tbody></table></div>
-    `;
-  }
-  let freshUploadBlock = '';
-  if(customerSummary){ freshUploadBlock = segmentAffinityBlock(customerSummary, false); }
-  else if(sampleSummary){ freshUploadBlock = segmentAffinityBlock(sampleSummary, true); }
-  else {
-    freshUploadBlock = `<div class="empty" style="padding:20px;">
-      <p>Upload a fresher export any time to recompute segments and affinity straight from raw order data instead of this snapshot.</p>
-      <button class="btn ghost" onclick="loadSampleData()">Preview with sample data</button>
-    </div>`;
-  }
-
-  el('panel-customer').innerHTML = `
-    <div class="assumption-note"><b>Source:</b> your executive customer base analysis, period ${R.periodLabel}. Figures below are hardcoded from that report, not recomputed live — upload a fresh order export at the bottom of this tab whenever you want these numbers to move forward in time.</div>
-
-    <div class="section-title">Executive Snapshot</div>
-    <div class="grid grid-4">
-      <div class="card kpi"><div class="label">Total Revenue</div><div class="value">${inrLakh(R.totalRevenue)}</div><div class="sub">${R.totalOrders.toLocaleString('en-IN')} orders · ${R.totalCustomers.toLocaleString('en-IN')} customers</div></div>
-      <div class="card kpi"><div class="label">Repeat Purchase Rate</div><div class="value" style="color:var(--danger)">${pct(R.repeatPurchaseRate)}</div><div class="sub">${pct(R.newCustomerRevenueSharePct)} of revenue is new-customer</div></div>
-      <div class="card kpi"><div class="label">Discounted Orders</div><div class="value">${pct(R.discountedOrdersPct)}</div><div class="sub">${inr(R.totalDiscountGiven)} given away · ${pct(R.avgDiscountPct)} avg</div></div>
-      <div class="card kpi"><div class="label">Channel Concentration</div><div class="value" style="color:var(--danger)">${pct(R.primaryChannelSharePct)}</div><div class="sub">${R.primaryChannel} — single point of failure</div></div>
-    </div>
-    <div class="hint" style="margin-top:6px;">Overall AOV: headline ₹${R.aovHeadline.toLocaleString('en-IN')} vs the exact query figure ₹${R.aovExact.toLocaleString('en-IN')} — the report reports both, use the exact one for modelling.</div>
-
-    <div class="assumption-note" style="border-color:var(--danger);background:var(--danger-soft);color:var(--danger);margin-top:14px;">
-      <b>The headline problem:</b> ${pct(R.newCustomerRevenueSharePct)} of revenue comes from new customers and only ${pct(R.repeatPurchaseRate)} of customers ever return. Growth is almost entirely paid-acquisition dependent right now — everything below is aimed at fixing that.
-    </div>
-
-    <div class="section-title">Real Customer Segments <span class="n">from your analysis</span></div>
-    <div class="grid grid-2">${segCardsReal}</div>
-
-    <div class="section-title">Revenue Concentration — New vs Returning</div>
-    <div class="grid grid-2">
-      <div class="card"><b>New Customers</b><div class="grid grid-2" style="margin-top:8px;"><div><div class="hint">Customers</div><div class="mono">${REAL_REVENUE_CONCENTRATION.newCustomers.toLocaleString('en-IN')}</div></div><div><div class="hint">Revenue</div><div class="mono">${inr(REAL_REVENUE_CONCENTRATION.newRevenue)}</div></div><div><div class="hint">AOV</div><div class="mono">${inr(REAL_REVENUE_CONCENTRATION.newAov)}</div></div><div><div class="hint">Avg Orders</div><div class="mono">${REAL_REVENUE_CONCENTRATION.newAvgOrders}</div></div></div></div>
-      <div class="card"><b>Returning Customers</b><div class="grid grid-2" style="margin-top:8px;"><div><div class="hint">Customers</div><div class="mono">${REAL_REVENUE_CONCENTRATION.returningCustomers.toLocaleString('en-IN')}</div></div><div><div class="hint">Revenue</div><div class="mono">${inr(REAL_REVENUE_CONCENTRATION.returningRevenue)}</div></div><div><div class="hint">AOV</div><div class="mono">${inr(REAL_REVENUE_CONCENTRATION.returningAov)}</div></div><div><div class="hint">Avg Orders</div><div class="mono">${REAL_REVENUE_CONCENTRATION.returningAvgOrders}</div></div></div></div>
-    </div>
-    <div class="assumption-note" style="margin-top:10px;">${REAL_REVENUE_CONCENTRATION.note}</div>
-
-    <div class="section-title">Discount Analysis</div>
-    <div class="grid grid-3">
-      <div class="card"><div class="hint">Non-discounted AOV</div><div class="mono" style="font-size:18px;">${inr(R.nonDiscountedAov)}</div><div class="hint">${R.nonDiscountedCustomers.toLocaleString('en-IN')} customers, ${inr(R.nonDiscountedRevenue)} revenue</div></div>
-      <div class="card"><div class="hint">Discounted AOV</div><div class="mono" style="font-size:18px;">${inr(R.discountedAov)}</div><div class="hint">Lower AOV than non-discounted — discounts aren't buying bigger baskets</div></div>
-      <div class="card"><div class="hint">Estimated recoverable margin</div><div class="mono" style="font-size:18px;">${inr(R.incrementalityLowRs)}–${inr(R.incrementalityHighRs)}</div><div class="hint">If ${pct(R.incrementalityLowPct,0)}–${pct(R.incrementalityHighPct,0)} of discounted orders would have converted anyway</div></div>
-    </div>
-
-    <div class="section-title">Top Products <span class="n">by revenue, full period</span></div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Product</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">AOV</th><th class="num">Catalog price · margin</th></tr></thead>
-      <tbody>${topProductRows}</tbody>
-    </table></div>
-
-    <div class="section-title">Channel Mix</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Channel</th><th class="num">Revenue</th><th class="num">Orders</th><th class="num">Share</th></tr></thead>
-      <tbody>${channelRows}</tbody>
-    </table></div>
-
-    <div class="section-title">Optimal Discount Policy by Segment <span class="n">editable · derived from real data</span></div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Segment</th><th>Suggested action</th><th>Discount</th></tr></thead>
-      <tbody>${playbookRows}</tbody>
-    </table></div>
-
-    <div class="section-title">Replenishment Rules <span class="n">editable · tuned to real cycles where reported</span></div>
-    <div class="assumption-note">Glass/Bathroom/Kitchen timing below reflects the real reorder cycles found in your analysis (Glass ~75 days, Bathroom kit components 60-90 days, Kitchen ~45 days). Categories without a reported cycle keep the 6-month default from Invisel's own protection-life claim.</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Category</th><th>Nudge after</th><th>Suggested cross-sell / replenishment SKU</th></tr></thead>
-      <tbody>${rulesRows}</tbody>
-    </table></div>
-
-    <div class="section-title">Loyalty Tiers <span class="n">Smile.io structure, from your analysis</span></div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Tier</th><th>Qualification</th><th>Benefits</th></tr></thead>
-      <tbody>${loyaltyRows}</tbody>
-    </table></div>
-
-    <div class="section-title">Bundle Opportunities</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Bundle</th><th>Components</th><th>Note</th></tr></thead>
-      <tbody>${bundleOppRows}</tbody>
-    </table></div>
-
-    <div class="section-title">Recommendations Ranked by Impact</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th class="num">#</th><th>Recommendation</th><th class="num">Est. annual impact</th><th>Effort</th></tr></thead>
-      <tbody>${recRows}</tbody>
-    </table></div>
-
-    <div class="section-title">Retention &amp; Campaign Track Record <span class="n">from your WhatsApp/BiteSpeed export</span></div>
-    <div class="grid grid-4">
-      <div class="card kpi"><div class="label">Broadcasts Sent</div><div class="value">${REAL_BROADCAST_SUMMARY.count}</div><div class="sub">${REAL_BROADCAST_SUMMARY.sent.toLocaleString('en-IN')} messages sent</div></div>
-      <div class="card kpi"><div class="label">Broadcast Revenue</div><div class="value">${inr(REAL_BROADCAST_SUMMARY.revenue)}</div><div class="sub">${REAL_BROADCAST_SUMMARY.conversions} conversions</div></div>
-      <div class="card kpi"><div class="label">Broadcast Spend</div><div class="value">${inr(REAL_BROADCAST_SUMMARY.cost)}</div><div class="sub">blended ROI</div></div>
-      <div class="card kpi"><div class="label">Blended Broadcast ROI</div><div class="value">${REAL_BROADCAST_SUMMARY.blendedRoi}x</div><div class="sub">revenue ÷ spend, all broadcasts</div></div>
-    </div>
-
-    <div class="assumption-note" style="border-color:var(--danger);background:var(--danger-soft);color:var(--danger);margin-top:12px;"><b>This directly affects Recommendation #1 above:</b> ${REAL_SEGMENT_TEST_NOTE}</div>
-
-    <div class="grid grid-2" style="margin-top:14px;">
-      <div>
-        <div class="section-title" style="margin-top:0;">Best-Performing Broadcasts</div>
-        <div class="tablewrap"><table>
-          <thead><tr><th>Broadcast</th><th class="num">ROI</th><th class="num">Revenue</th><th class="num">Cost</th></tr></thead>
-          <tbody>${broadcastTopRows}</tbody>
-        </table></div>
-      </div>
-      <div>
-        <div class="section-title" style="margin-top:0;">Broadcasts That Wasted Spend <span class="n">₹0 revenue</span></div>
-        <div class="tablewrap"><table>
-          <thead><tr><th>Broadcast</th><th class="num">Sent</th><th class="num">Delivered</th><th class="num">Cost</th></tr></thead>
-          <tbody>${broadcastZeroRows}</tbody>
-        </table></div>
-      </div>
-    </div>
-
-    <div class="section-title">Live Retention/Upsell Journeys</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Journey</th><th class="num">Recipients</th><th class="num">Revenue</th><th class="num">Conversions</th><th class="num">Read Rate</th><th class="num">Click Rate</th></tr></thead>
-      <tbody>${liveJourneyRows}</tbody>
-    </table></div>
-    <div class="hint" style="margin-top:6px;">Checkout and Browse Abandonment are carrying almost all journey-driven revenue (₹13.5L combined). Order Delivered and Order Shipping have huge reach and strong read rates but zero revenue attached — no offer or cross-sell is riding on them yet.</div>
-
-    <div class="section-title">Draft Journeys Worth Turning On</div>
-    <div class="assumption-note">These are built but not live (or paused). Several already show real conversions from before they were turned off — the fastest lever available for revenue that isn't in the recommendations list above, because it doesn't require building anything new.</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Journey</th><th class="num">Recipients so far</th><th class="num">Revenue so far</th><th class="num">Conversions</th><th>Note</th></tr></thead>
-      <tbody>${draftJourneyRows}</tbody>
-    </table></div>
-
-    <div class="assumption-note"><b>Data gaps to close next:</b><ul style="margin:6px 0 0 18px;padding:0;">${gapItems}</ul></div>
-
-    <div class="section-title">Refresh With a New Order Export</div>
-    <div class="card">
-      <div class="dropzone" id="dropzone" onclick="document.getElementById('csvInput').click()">
-        Drop a CSV export here, or click to choose a file<br/>
-        <span class="hint">Needs columns for customer (email/phone/ID), order date, and product/SKU. Amount/quantity optional but recommended.</span>
-      </div>
-      <input type="file" id="csvInput" accept=".csv" style="display:none" onchange="handleCsvFile(this.files[0])"/>
-      <div id="csvStatus" class="hint" style="margin-top:8px;"></div>
-    </div>
-    ${freshUploadBlock}
-  `;
-}
-function updateRetentionRule(i, key, val){
-  state.retentionRules[i][key] = key==='months' ? (parseFloat(val)||0) : val;
-  queueSave();
-}
-function updateOfferPlaybook(i, key, val){
-  state.offerPlaybook[i][key] = val;
-  queueSave();
-}
-
-/* drag and drop wiring (re-attached each render since dropzone is re-created) */
-document.addEventListener('dragover', function(e){
-  const dz = document.getElementById('dropzone');
-  if(dz && dz.contains(e.target)){ e.preventDefault(); dz.classList.add('drag'); }
-});
-document.addEventListener('dragleave', function(e){
-  const dz = document.getElementById('dropzone');
-  if(dz){ dz.classList.remove('drag'); }
-});
-document.addEventListener('drop', function(e){
-  const dz = document.getElementById('dropzone');
-  if(dz && dz.contains(e.target)){
-    e.preventDefault(); dz.classList.remove('drag');
-    if(e.dataTransfer.files && e.dataTransfer.files[0]) handleCsvFile(e.dataTransfer.files[0]);
-  }
-});
-
-/* ---------------------------------------------------------------------
    SKU CATALOG
 --------------------------------------------------------------------- */
 function updateCatalogField(id, field, val){
@@ -2180,8 +1780,10 @@ function updateCatalogField(id, field, val){
   row[field] = parseFloat(val)||0;
   delete row.priceNeedsReview;
   queueSave();
-  withFocusPreserved(()=>{ renderCatalog(); renderDiscount(); renderBundle(); });
+  withFocusPreserved(()=>{ renderCatalog(); });
 }
+function setDiscountFloor(v){ state.discountFloorPct = clamp((parseFloat(v)||0)/100,0,1); queueSave(); publishMarketingCatalog(); withFocusPreserved(renderCatalog); }
+function setBundleFloor(v){ state.bundleFloorPct = clamp((parseFloat(v)||0)/100,0,1); queueSave(); publishMarketingCatalog(); withFocusPreserved(renderCatalog); }
 function renderCatalog(){
   const needsReviewCount = CATALOG.filter(c=>c.priceNeedsReview).length;
   const rows = CATALOG.map(c=>{
@@ -2196,6 +1798,13 @@ function renderCatalog(){
     </tr>`;
   }).join('');
   el('panel-catalog').innerHTML = `
+    <div class="section-title">Discount &amp; Bundle Floor Settings <span class="n">used to compute ceilings published to Marketing</span></div>
+    <div class="assumption-note">Marketing consoles read these floors to show discount/bundle ceilings but can't edit them — this is the only place to change them now that Discount/Bundle Engine tabs have moved to Marketing Full.</div>
+    <div class="grid grid-2">
+      <div class="card"><label class="field">Discount Floor %</label><input type="number" step="0.1" value="${(state.discountFloorPct*100).toFixed(2)}" data-fid="discount-floor" oninput="setDiscountFloor(this.value)"/><div class="hint">Minimum margin % to protect on any single-SKU discount</div></div>
+      <div class="card"><label class="field">Bundle Floor %</label><input type="number" step="0.1" value="${(state.bundleFloorPct*100).toFixed(2)}" data-fid="bundle-floor" oninput="setBundleFloor(this.value)"/><div class="hint">Minimum margin % to protect on any bundle</div></div>
+    </div>
+
     <div class="section-title">SKU Catalog <span class="n">${CATALOG.length} SKUs · editable</span></div>
     ${needsReviewCount? `<div class="assumption-note" style="border-color:var(--warn);background:var(--warn-soft);color:var(--warn);">${needsReviewCount} SKU${needsReviewCount>1?'s have':' has'} a price changed from the Marketing console. Confirm the COGS still makes sense at the new price — any edit here (even re-entering the same COGS) republishes a reconfirmed ceiling to the team.</div>` : ''}
     <input type="text" placeholder="Search SKUs…" style="margin-bottom:10px;" oninput="filterCatalog(this.value)"/>
@@ -2247,9 +1856,6 @@ async function init(){
   renderOverview();
   renderIncome();
   renderMargin();
-  renderDiscount();
-  renderBundle();
-  renderCustomer();
   renderCatalog();
 }
 init();
