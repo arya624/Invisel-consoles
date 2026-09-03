@@ -32,7 +32,7 @@
   .asof input{font-family:'IBM Plex Mono',monospace;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12.5px;background:var(--surface);}
 
   .tabs{display:flex;gap:4px;margin-bottom:22px;border-bottom:1px solid var(--border);flex-wrap:wrap;}
-  .tab{padding:10px 16px;font-size:13px;font-weight:600;color:var(--ink-soft);cursor:pointer;border-bottom:2px solid transparent;user-select:none;}
+  .tab{padding:10px 16px;font-size:13px;font-weight:600;color:var(--ink-soft);cursor:pointer;border-bottom:2px solid transparent;user-select:none;white-space:nowrap;}
   .tab:hover{color:var(--ink);}
   .tab.active{color:var(--accent-ink);border-bottom:2px solid var(--accent);}
   .panel{display:none;}
@@ -44,6 +44,51 @@
   .grid-3{grid-template-columns:repeat(3,1fr);}
   .grid-2{grid-template-columns:repeat(2,1fr);}
   @media(max-width:900px){.grid-4{grid-template-columns:repeat(2,1fr);}.grid-3{grid-template-columns:repeat(2,1fr);}}
+
+  /* Phone-sized screens */
+  @media(max-width:640px){
+    .app{padding:12px 12px 40px;}
+    html,body{font-size:15px;}
+    .topbar{padding:12px 0 14px;gap:10px;}
+    .brand h1{font-size:16px;}
+    .brand span{font-size:10.5px;}
+    .asof{width:100%;justify-content:space-between;}
+    .savebadge{width:100%;justify-content:flex-end;order:3;}
+
+    /* Tab bar becomes a horizontal swipe strip instead of wrapping —
+       far easier to use with a thumb than a multi-row wrapped bar. */
+    .tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:16px;padding-bottom:2px;}
+    .tabs::-webkit-scrollbar{height:4px;}
+    .tab{padding:10px 12px;font-size:12.5px;flex:none;}
+
+    .grid-4,.grid-3,.grid-2{grid-template-columns:1fr;}
+    .grid{gap:10px;}
+
+    .card{padding:13px;}
+    .kpi .value{font-size:19px;}
+    .kpi .label{font-size:10.5px;}
+
+    .section-title{font-size:14px;margin:20px 0 10px;flex-wrap:wrap;}
+
+    /* Larger touch targets — comfortable tapping over the default
+       compact desktop sizing. */
+    input[type=number],input[type=text],input[type=date],select{
+      padding:11px 10px;font-size:14.5px;
+    }
+    .btn{padding:11px 16px;font-size:14px;}
+    .btn.small{padding:9px 13px;font-size:13px;}
+
+    table{font-size:12px;}
+    thead th{padding:7px 8px;font-size:10px;}
+    tbody td{padding:9px 8px;}
+    .tablewrap{max-height:400px;}
+
+    /* Every table gets a horizontal scroll affordance rather than
+       squeezing columns unreadably narrow. */
+    .tablewrap table{min-width:560px;}
+
+    .row{gap:8px;}
+  }
 
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;}
   .kpi{position:relative;overflow:hidden;}
@@ -128,6 +173,8 @@
   <div class="tabs">
     <div class="tab active" data-tab="overview" onclick="showTab('overview')">Overview & Targets</div>
     <div class="tab" data-tab="profitability" onclick="showTab('profitability')">Daily &amp; MTD Profitability</div>
+    <div class="tab" data-tab="b2b" onclick="showTab('b2b')">B2B Deals</div>
+    <div class="tab" data-tab="expenses" onclick="showTab('expenses')">Expenses &amp; Overheads</div>
     <div class="tab" data-tab="income" onclick="showTab('income')">Income Statement</div>
     <div class="tab" data-tab="margin" onclick="showTab('margin')">CM1 · CM2 · CM3</div>
     <div class="tab" data-tab="catalog" onclick="showTab('catalog')">SKU Catalog</div>
@@ -135,6 +182,8 @@
 
   <div id="panel-overview" class="panel active"></div>
   <div id="panel-profitability" class="panel"></div>
+  <div id="panel-b2b" class="panel"></div>
+  <div id="panel-expenses" class="panel"></div>
   <div id="panel-income" class="panel"></div>
   <div id="panel-margin" class="panel"></div>
   <div id="panel-catalog" class="panel"></div>
@@ -779,7 +828,7 @@ function showTab(name){
 }
 
 function onAsOfChange(v){ state.asOfDate = v; queueSave(); renderOverview(); }
-function switchMonth(key){ state.activeMonth = key; ensureMonth(key); dailyEntryDay = null; queueSave(); renderOverview(); renderIncome(); renderProfitability(); renderMargin(); }
+function switchMonth(key){ state.activeMonth = key; ensureMonth(key); dailyEntryDay = null; queueSave(); renderOverview(); renderIncome(); renderProfitability(); renderExpenses(); renderB2B(); renderMargin(); }
 function addNextMonth(){
   const latest = Object.keys(state.months).sort().slice(-1)[0] || state.activeMonth;
   const nk = nextMonthKey(latest);
@@ -1000,15 +1049,53 @@ function sumDailyLog(monthKey){
   return sums;
 }
 
+/* B2B deals — confirmed deals sum into m.mtd.b2bRevenue (the same
+   field Income Statement already reads), so nothing downstream needs
+   to change to pick this up. Expected/pipeline deals feed a separate
+   projected figure, since B2B revenue closes in lumpy deal-sized
+   chunks, not a smooth daily pace like Shopify/Amazon. */
+function recomputeB2BRevenue(monthKey){
+  const m = ensureMonth(monthKey);
+  const clients = m.b2bClients || [];
+  m.mtd.b2bRevenue = clients.filter(c=>c.status==='confirmed').reduce((s,c)=>s+(c.revenue||0),0);
+}
+function addB2BClient(){
+  const m = ensureMonth(state.activeMonth);
+  if(!m.b2bClients) m.b2bClients = [];
+  m.b2bClients.push({ name:"New client", status:"expected", revenue:0, cogsPct: state.assumptions.cogsB2B, taxPct: state.assumptions.byobTaxPct });
+  recomputeB2BRevenue(state.activeMonth);
+  queueSave();
+  renderB2B(); renderIncome(); renderProfitability();
+}
+function removeB2BClient(i){
+  const m = ensureMonth(state.activeMonth);
+  m.b2bClients.splice(i,1);
+  recomputeB2BRevenue(state.activeMonth);
+  queueSave();
+  renderB2B(); renderIncome(); renderProfitability();
+}
+function updateB2BClient(i, key, val){
+  const m = ensureMonth(state.activeMonth);
+  const row = m.b2bClients[i];
+  if(key==='name' || key==='status') row[key] = val;
+  else row[key] = key==='revenue' ? (parseFloat(val)||0) : (parseFloat(val)||0)/100;
+  recomputeB2BRevenue(state.activeMonth);
+  queueSave();
+  withFocusPreserved(renderB2B);
+  renderIncome(); renderProfitability();
+}
+
 function addOverheadRow(){
   ensureMonth(state.activeMonth).overheads.push({ name:"New expense", category:"Operating", amount:0 });
   queueSave();
+  renderExpenses();
   renderIncome();
   renderProfitability();
 }
 function removeOverheadRow(i){
   ensureMonth(state.activeMonth).overheads.splice(i,1);
   queueSave();
+  renderExpenses();
   renderIncome();
   renderProfitability();
 }
@@ -1016,7 +1103,9 @@ function updateOverheadRow(i, key, val){
   const row = ensureMonth(state.activeMonth).overheads[i];
   row[key] = key==='amount' ? (parseFloat(val)||0) : val;
   queueSave();
-  withFocusPreserved(renderIncome);
+  withFocusPreserved(renderExpenses);
+  renderIncome();
+  renderProfitability();
 }
 
 /* ---------------------------------------------------------------------
@@ -1104,7 +1193,13 @@ function computeMonthProjection(monthKey){
     const p = status==='future' ? 0 : mtdVal/effElapsed;
     return p*totalDays;
   }
-  const projB2B = paceProject(m.mtd.b2bRevenue);
+  // B2B closes in lumpy deal-sized chunks, not a smooth daily pace —
+  // when the B2B Deals tab has real client data, project using
+  // Confirmed + Expected pipeline instead of a daily run-rate.
+  const b2bClientsForProj = m.b2bClients || [];
+  const b2bConfirmedTotal = b2bClientsForProj.filter(c=>c.status==='confirmed').reduce((s,c)=>s+(c.revenue||0),0);
+  const b2bExpectedTotal = b2bClientsForProj.filter(c=>c.status==='expected').reduce((s,c)=>s+(c.revenue||0),0);
+  const projB2B = b2bClientsForProj.length>0 ? (b2bConfirmedTotal+b2bExpectedTotal) : paceProject(m.mtd.b2bRevenue);
   const projB2C = paceProject(m.mtd.b2cRevenue);
   const projDirectIncome = paceProject(m.mtd.directIncome);
   const projMetaGoogleSpend = paceProject(m.mtd.metaGoogleSpend);
@@ -1113,7 +1208,8 @@ function computeMonthProjection(monthKey){
 
   return { m, dayInfo, mtdTotal, mtdSpend, currentRoas, projTotal, projShopify, projMarketplace,
     gapTotal, gapShopify, gapMarketplace, requiredDaily, incRevenueNeeded, requiredIncSpend, reqMetaGoogle, reqAmazonAds,
-    projB2B, projB2C, projDirectIncome, projMetaGoogleSpend, projAmazonAdsSpend, projMarketingSpend };
+    projB2B, projB2C, projDirectIncome, projMetaGoogleSpend, projAmazonAdsSpend, projMarketingSpend,
+    b2bConfirmedTotal, b2bExpectedTotal };
 }
 
 function renderOverview(){
@@ -1447,7 +1543,7 @@ function computeIncomeStatementLine(rev, marketingSpend, overheads, a, realFigur
   // never got real tracking requested).
   const cogsShopify = realFigures ? realFigures.cogsShopify : rev.shopify * a.cogsD2C;
   const cogsMarketplace = realFigures ? realFigures.cogsMarketplace : rev.marketplace * a.marketplaceCogsPct;
-  const cogsB2B = rev.b2b * a.cogsB2C_or_B2B; // set by caller to cogsB2B
+  const cogsB2B = (realFigures && realFigures.cogsB2B!==undefined) ? realFigures.cogsB2B : rev.b2b * a.cogsB2C_or_B2B;
   const cogsB2C = rev.b2c * a.cogsD2C;
   const totalCogs = cogsShopify + cogsMarketplace + cogsB2B + cogsB2C;
   const totalRevenue = rev.shopify + rev.marketplace + rev.b2b + rev.b2c + rev.directIncome;
@@ -1510,7 +1606,8 @@ function computeProfitabilityWaterfall(rev, marketingSpend, overheadsTotal, a){
   const cm3 = cm2 - overheadsTotal;
 
   return {
-    grossRevenue, rtoTotal, taxTotal, cogsTotal, cogsShopify, cogsAmazon, shippingTotal, pgfTotal,
+    grossRevenue, shopifyRevenue: rev.shopifyRevenue, amazonRevenue: rev.amazonRevenue,
+    rtoTotal, taxTotal, cogsTotal, cogsShopify, cogsAmazon, shippingTotal, pgfTotal,
     cm1, marketingSpend, cm2, overheadsTotal, cm3,
     cm1pct: grossRevenue? cm1/grossRevenue:0, cm2pct: grossRevenue? cm2/grossRevenue:0, cm3pct: grossRevenue? cm3/grossRevenue:0
   };
@@ -1602,15 +1699,21 @@ function renderProfitability(){
       function waterfallTable(w){
         function r(l, v, opts){
           opts=opts||{};
-          return `<tr><td style="${opts.bold?'font-weight:600;':''}">${l}</td><td class="num" style="${opts.bold?'font-weight:600;':''}${v<0?'color:var(--danger);':''}">${inr(v)}</td>${opts.pct!==undefined?`<td class="num">${pct(opts.pct)}</td>`:'<td></td>'}</tr>`;
+          const rowPct = opts.pct!==undefined ? opts.pct : (w.grossRevenue ? v/w.grossRevenue : 0);
+          const bold = opts.bold ? 'font-weight:600;' : '';
+          return `<tr><td style="${bold}">${l}</td><td class="num" style="${bold}${v<0?'color:var(--danger);':''}">${inr(v)}</td><td class="num" style="${bold}">${pct(rowPct)}</td></tr>`;
         }
+        const shopifyCogsPct = w.shopifyRevenue ? w.cogsShopify/w.shopifyRevenue : 0;
+        const amazonCogsPct = w.amazonRevenue ? w.cogsAmazon/w.amazonRevenue : 0;
         return `<div class="tablewrap"><table>
           <thead><tr><th>Line</th><th class="num">Amount</th><th class="num">% of Revenue</th></tr></thead>
           <tbody>
-            ${r('Gross Revenue', w.grossRevenue, {bold:true})}
+            ${r('Gross Revenue', w.grossRevenue, {bold:true, pct:1})}
             ${r('− RTO', -w.rtoTotal)}
             ${r('− Tax', -w.taxTotal)}
-            ${r('− COGS', -w.cogsTotal)}
+            ${r('− Shopify COGS', -w.cogsShopify, {pct: -shopifyCogsPct})}
+            ${r('− Amazon COGS', -w.cogsAmazon, {pct: -amazonCogsPct})}
+            ${r('− COGS Total', -w.cogsTotal)}
             ${r('− Shipping', -w.shippingTotal)}
             ${r('− PGF', -w.pgfTotal)}
             ${r('CM1 (Gross Profit)', w.cm1, {bold:true, pct:w.cm1pct})}
@@ -1619,7 +1722,9 @@ function renderProfitability(){
             ${r('− Expenses & Overheads', -w.overheadsTotal)}
             ${r('CM3', w.cm3, {bold:true, pct:w.cm3pct})}
           </tbody>
-        </table></div>`;
+        </table>
+        <div class="hint" style="margin-top:4px;">Shopify COGS % and Amazon COGS % are that channel's own cost ratio (COGS ÷ that channel's own revenue) — everything else is % of total Gross Revenue.</div>
+        </div>`;
       }
 
       const mtdTargetPct = m.targets.total ? mtdW.grossRevenue/m.targets.total : 0;
@@ -1710,67 +1815,70 @@ function renderProfitability(){
   `;
 }
 
-function renderIncome(){
+function renderB2B(){
+  const s = state; const a = s.assumptions;
+  const activeKey = s.activeMonth;
+  const m = ensureMonth(activeKey);
+  if(!m.b2bClients) m.b2bClients = [];
+  recomputeB2BRevenue(activeKey);
+
+  const clients = m.b2bClients;
+  const confirmed = clients.filter(c=>c.status==='confirmed');
+  const expected = clients.filter(c=>c.status==='expected');
+  const confirmedRevenue = confirmed.reduce((s,c)=>s+(c.revenue||0),0);
+  const expectedRevenue = expected.reduce((s,c)=>s+(c.revenue||0),0);
+  const projectedTotal = confirmedRevenue + expectedRevenue;
+  const confirmedCogs = confirmed.reduce((s,c)=>s+(c.revenue||0)*(c.cogsPct!==undefined?c.cogsPct:a.cogsB2B),0);
+  const confirmedTax = confirmed.reduce((s,c)=>s+(c.revenue||0)*(c.taxPct!==undefined?c.taxPct:a.byobTaxPct),0);
+  const confirmedNet = confirmedRevenue - confirmedCogs - confirmedTax;
+
+  const rows = clients.map((c,i)=>{
+    const cogsPct = c.cogsPct!==undefined ? c.cogsPct : a.cogsB2B;
+    const taxPct = c.taxPct!==undefined ? c.taxPct : a.byobTaxPct;
+    const cogsAmt = (c.revenue||0)*cogsPct;
+    const taxAmt = (c.revenue||0)*taxPct;
+    const net = (c.revenue||0) - cogsAmt - taxAmt;
+    return `<tr>
+      <td><input type="text" value="${c.name}" data-fid="b2b-name-${i}" oninput="updateB2BClient(${i},'name',this.value)" style="width:100%"/></td>
+      <td>
+        <select data-fid="b2b-status-${i}" onchange="updateB2BClient(${i},'status',this.value)">
+          <option value="confirmed" ${c.status==='confirmed'?'selected':''}>Confirmed</option>
+          <option value="expected" ${c.status==='expected'?'selected':''}>Expected / Pipeline</option>
+        </select>
+      </td>
+      <td class="num"><input type="number" value="${c.revenue}" data-fid="b2b-rev-${i}" oninput="updateB2BClient(${i},'revenue',this.value)" style="width:110px"/></td>
+      <td class="num"><input type="number" step="0.1" value="${(cogsPct*100).toFixed(2)}" data-fid="b2b-cogs-${i}" onchange="updateB2BClient(${i},'cogsPct',this.value)" style="width:80px"/></td>
+      <td class="num"><input type="number" step="0.1" value="${(taxPct*100).toFixed(2)}" data-fid="b2b-tax-${i}" onchange="updateB2BClient(${i},'taxPct',this.value)" style="width:80px"/></td>
+      <td class="num" style="color:${net<0?'var(--danger)':'inherit'};font-weight:600;">${inr(net)}</td>
+      <td><button class="btn ghost small" onclick="removeB2BClient(${i})">remove</button></td>
+    </tr>`;
+  }).join('');
+
+  el('panel-b2b').innerHTML = `
+    <div class="assumption-note"><b>Confirmed deals automatically become the B2B Revenue figure</b> used in Income Statement and MTD/Daily Profitability — nothing to sync manually. Expected/Pipeline deals don't count as revenue yet, but feed the Projected Total below so this month's forecast reflects what's actually in motion, not just a daily pace applied to a lumpy number.</div>
+
+    <div class="grid grid-4" style="margin-bottom:18px;">
+      <div class="card kpi" style="border-color:var(--accent);"><div class="label">Confirmed Revenue</div><div class="value">${inr(confirmedRevenue)}</div><div class="sub">${confirmed.length} deal${confirmed.length===1?'':'s'} — feeds Income Statement</div></div>
+      <div class="card kpi"><div class="label">Expected / Pipeline</div><div class="value">${inr(expectedRevenue)}</div><div class="sub">${expected.length} deal${expected.length===1?'':'s'} — not counted as revenue yet</div></div>
+      <div class="card kpi"><div class="label">Projected Total</div><div class="value">${inr(projectedTotal)}</div><div class="sub">Confirmed + Expected</div></div>
+      <div class="card kpi"><div class="label">Confirmed Net (after COGS &amp; Tax)</div><div class="value" style="color:${confirmedNet<0?'var(--danger)':'var(--good)'}">${inr(confirmedNet)}</div><div class="sub">${confirmedRevenue? pct(confirmedNet/confirmedRevenue):'—'} of confirmed revenue</div></div>
+    </div>
+
+    <div class="section-title">B2B Clients &amp; Deals <span class="n">${monthLabel(activeKey)} — editable</span></div>
+    <div class="hint" style="margin-bottom:8px;">COGS % and Tax % default to the shared assumptions (${pct(a.cogsB2B)} / ${pct(a.byobTaxPct)}) but are editable per deal, since B2B terms vary client to client.</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Client</th><th>Status</th><th class="num">Revenue (₹)</th><th class="num">COGS %</th><th class="num">Tax %</th><th class="num">Net</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <button class="btn ghost small" style="margin-top:8px;" onclick="addB2BClient()">+ Add B2B Client / Deal</button>
+  `;
+}
+
+function renderExpenses(){
   const s = state; const a = s.assumptions;
   const activeKey = s.activeMonth;
   const P = computeMonthProjection(activeKey);
   const m = P.m;
-
-  const aWithB2B = Object.assign({}, a, { cogsB2C_or_B2B: a.cogsB2B });
-  const monthCogsRto = computeMonthCogsRto(activeKey);
-  // "Actual" (MTD so far) uses exactly the real-or-estimated sums from
-  // logged days — that IS the actual-to-date figure.
-  const actualRealFigures = { cogsShopify: monthCogsRto.cogsShopify, cogsMarketplace: monthCogsRto.cogsMarketplace, rtoShopify: monthCogsRto.rtoShopify, rtoAmazon: monthCogsRto.rtoAmazon };
-  // Projection = what's already logged (real-or-estimated) + the
-  // assumption-based % applied only to the *remaining* projected
-  // revenue that hasn't been logged yet, so entering real numbers for
-  // more days makes the projection progressively more accurate instead
-  // of double-counting or overwriting logged days.
-  const remainingShopifyRev = Math.max(P.projShopify - monthCogsRto.loggedShopifyRevenue, 0);
-  const remainingAmazonRev = Math.max(P.projMarketplace - monthCogsRto.loggedAmazonRevenue, 0);
-  const projRealFigures = {
-    cogsShopify: monthCogsRto.cogsShopify + remainingShopifyRev*a.cogsD2C,
-    cogsMarketplace: monthCogsRto.cogsMarketplace + remainingAmazonRev*a.marketplaceCogsPct,
-    rtoShopify: monthCogsRto.rtoShopify + remainingShopifyRev*(a.rtoProvisionPctShopify||0),
-    rtoAmazon: monthCogsRto.rtoAmazon + remainingAmazonRev*(a.rtoProvisionPctAmazon||0)
-  };
-  const actualLine = computeIncomeStatementLine(
-    { shopify:m.mtd.shopifyRevenue, marketplace:m.mtd.marketplaceRevenue, b2b:m.mtd.b2bRevenue, b2c:m.mtd.b2cRevenue, directIncome:m.mtd.directIncome },
-    P.mtdSpend, m.overheads, aWithB2B, actualRealFigures
-  );
-  const projLine = computeIncomeStatementLine(
-    { shopify:P.projShopify, marketplace:P.projMarketplace, b2b:P.projB2B, b2c:P.projB2C, directIncome:P.projDirectIncome },
-    P.projMarketingSpend, m.overheads, aWithB2B, projRealFigures
-  );
-  const label = P.dayInfo.status==='past' ? 'Final' : 'Projected Full Month';
-
-  function isRow(l, r1, r2){
-    return `<tr>
-      <td>${l}</td>
-      <td class="num">${inr(r1)}</td>
-      <td class="num">${inr(r2)}</td>
-    </tr>`;
-  }
-  function isRowPct(l, r1, r1pct, r2, r2pct){
-    return `<tr>
-      <td><b>${l}</b></td>
-      <td class="num"><b>${inr(r1)}</b> <span class="hint">${pct(r1pct)}</span></td>
-      <td class="num"><b>${inr(r2)}</b> <span class="hint">${pct(r2pct)}</span></td>
-    </tr>`;
-  }
-
-  const histRows = REAL_PL_HISTORY.map(h=>`<tr>
-    <td>${h.month}</td>
-    <td class="num">${inr(h.revenue)}</td>
-    <td class="num">${inr(h.cogs)}</td>
-    <td class="num">${pct(h.cm1pct)}</td>
-    <td class="num">${inr(h.marketing)}</td>
-    <td class="num">${pct(h.cm2pct)}</td>
-    <td class="num">${inr(h.tech)}</td>
-    <td class="num">${pct(h.cm3pct)}</td>
-    <td class="num" style="color:${h.netProfit<0?'var(--danger)':'inherit'}">${inr(h.netProfit)}</td>
-    <td class="num">${pct(h.netMargin)}</td>
-  </tr>`).join('');
 
   const overheadRows = m.overheads.map((o,i)=>`<tr>
     <td><input type="text" value="${o.name}" data-fid="oh-name-${i}" oninput="updateOverheadRow(${i},'name',this.value)" style="width:100%"/></td>
@@ -1783,52 +1891,11 @@ function renderIncome(){
     <td><button class="btn ghost small" onclick="removeOverheadRow(${i})">remove</button></td>
   </tr>`).join('');
 
-  el('panel-income').innerHTML = `
-    <div class="assumption-note"><b>Source:</b> real monthly P&L from your income statement workbook (Apr–Jun 2026 actuals). This tab is the master financial view — everything below is built from the same targets/actuals as Overview, plus editable overheads, and flows through to both marketing consoles as redacted ceilings only.</div>
-
-    <div class="section-title">Real Monthly P&amp;L History <span class="n">from your workbook</span></div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Month</th><th class="num">Revenue</th><th class="num">COGS</th><th class="num">CM1%</th><th class="num">Marketing</th><th class="num">CM2%</th><th class="num">Tech</th><th class="num">CM3%</th><th class="num">Net Profit</th><th class="num">NP%</th></tr></thead>
-      <tbody>${histRows}</tbody>
-    </table></div>
-    <div class="hint" style="margin-top:6px;">Trailing 3-mo avg used as defaults below: COGS ${pct(REAL_PL_TRAILING_AVG.cogsPct)} of revenue, Marketing ${pct(REAL_PL_TRAILING_AVG.marketingPct)} of revenue, Tech ${inr(REAL_PL_TRAILING_AVG.tech)}, Operating ${inr(REAL_PL_TRAILING_AVG.operating)}, Admin ${inr(REAL_PL_TRAILING_AVG.admin)}. Real COGS is running notably higher than the 15% D2C assumption used in the CM tab — worth reconciling.</div>
-
-    <div class="section-title">${monthLabel(activeKey)} — Additional Revenue Lines <span class="n">editable, paced like Shopify/Marketplace</span></div>
-    <div class="grid grid-4">
-      <div class="card"><label class="field">B2B Revenue (₹, MTD)</label><input type="number" value="${m.mtd.b2bRevenue}" data-fid="mtd-b2bRevenue" oninput="updateMtd('b2bRevenue', this.value)"/><div class="hint">Trailing avg: ${inr(REAL_PL_TRAILING_AVG.b2b)}/mo</div></div>
-      <div class="card"><label class="field">B2B COGS %</label><input type="number" step="0.1" value="${(a.cogsB2B*100).toFixed(2)}" data-fid="assum-cogsB2B" onchange="updateAssumption('cogsB2B', this.value, true)"/><div class="hint">Applied to B2B revenue only</div></div>
-      <div class="card"><label class="field">B2C Revenue (₹, MTD)</label><input type="number" value="${m.mtd.b2cRevenue}" data-fid="mtd-b2cRevenue" oninput="updateMtd('b2cRevenue', this.value)"/></div>
-      <div class="card"><label class="field">Direct Income — COD charges etc. (₹, MTD)</label><input type="number" value="${m.mtd.directIncome}" data-fid="mtd-directIncome" oninput="updateMtd('directIncome', this.value)"/><div class="hint">Trailing avg: ${inr(REAL_PL_TRAILING_AVG.directIncome)}/mo</div></div>
-    </div>
-
-    <div class="section-title">${monthLabel(activeKey)} — Full Company P&amp;L <span class="n">broader view: includes B2B/B2C/Direct Income and Net Profit, not just CM1-CM3 above</span></div>
-    <div class="assumption-note">Marketing &amp; Branding Expenses below is <b>not</b> separately typed — it's your MTD actual ad spend (Meta+Google+Amazon Ads from Overview) projected to a full month at the same daily pace as revenue. Change ad spend in Overview, not here.</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Line</th><th class="num">MTD Actual</th><th class="num">${label}</th></tr></thead>
-      <tbody>
-        ${isRow('Shopify Revenue', m.mtd.shopifyRevenue, P.projShopify)}
-        ${isRow('Marketplace Revenue', m.mtd.marketplaceRevenue, P.projMarketplace)}
-        ${isRow('B2B Revenue', m.mtd.b2bRevenue, P.projB2B)}
-        ${isRow('B2C Revenue', m.mtd.b2cRevenue, P.projB2C)}
-        ${isRow('Direct Income', m.mtd.directIncome, P.projDirectIncome)}
-        ${isRow('Total Revenue', actualLine.totalRevenue, projLine.totalRevenue)}
-        ${isRow('COGS', -actualLine.totalCogs, -projLine.totalCogs)}
-        ${isRow('Direct Expenses', -actualLine.directExpenses, -projLine.directExpenses)}
-        ${isRowPct('CM1', actualLine.cm1, actualLine.cm1pct, projLine.cm1, projLine.cm1pct)}
-        ${isRow('Marketing & Branding (from ad spend pace)', -actualLine.marketingSpend, -projLine.marketingSpend)}
-        ${isRowPct('CM2', actualLine.cm2, actualLine.cm2pct, projLine.cm2, projLine.cm2pct)}
-        ${isRow('Technology & Platform', -actualLine.tech, -projLine.tech)}
-        ${isRow('RTO Provision (Shopify + Amazon, estimate)', -actualLine.rtoProvisionTotal, -projLine.rtoProvisionTotal)}
-        ${isRowPct('CM3', actualLine.cm3, actualLine.cm3pct, projLine.cm3, projLine.cm3pct)}
-        ${isRow('Other Indirect Expenses', -actualLine.otherIndirect, -projLine.otherIndirect)}
-        ${isRow('Indirect Income', actualLine.indirectIncome, projLine.indirectIncome)}
-        ${isRowPct('Net Profit', actualLine.netProfit, actualLine.netMargin, projLine.netProfit, projLine.netMargin)}
-      </tbody>
-    </table></div>
-    <div class="assumption-note" style="margin-top:10px;border-color:${projLine.netProfit<0?'var(--danger)':'var(--good)'};background:${projLine.netProfit<0?'var(--danger-soft)':'var(--accent-soft)'};color:${projLine.netProfit<0?'var(--danger)':'var(--accent-ink)'};"><b>Projected ${monthLabel(activeKey)} Net Profit: ${inr(projLine.netProfit)} (${pct(projLine.netMargin)} margin)</b> at current pace, assumptions, and overheads below.</div>
+  el('panel-expenses').innerHTML = `
+    <div class="assumption-note"><b>Separate tab, fully editable</b> — every expense line here flows straight into CM2/CM3/Net Profit on the Profitability and Income Statement tabs, and into the Next Month Budget once you plan ahead.</div>
 
     <div class="section-title">Overheads &amp; Expenses <span class="n">editable — add expected new expenses here</span></div>
-    <div class="assumption-note">Pre-filled with trailing 3-month real averages. Add a row for anything new you're expecting (a hire, a new tool, a one-off cost) and it flows straight into CM2/CM3/Net Profit above.</div>
+    <div class="assumption-note">Pre-filled with trailing 3-month real averages. Add a row for anything new you're expecting (a hire, a new tool, a one-off cost) and it flows straight into CM2/CM3/Net Profit on the Profitability and Income Statement tabs.</div>
     <div class="tablewrap"><table>
       <thead><tr><th>Name</th><th>Category</th><th class="num">Monthly Amount (₹)</th><th></th></tr></thead>
       <tbody>${overheadRows}</tbody>
@@ -1868,6 +1935,124 @@ function renderIncome(){
         </table></div>
       `;
     })()}
+  `;
+}
+
+function renderIncome(){
+  const s = state; const a = s.assumptions;
+  const activeKey = s.activeMonth;
+  const P = computeMonthProjection(activeKey);
+  const m = P.m;
+
+  const aWithB2B = Object.assign({}, a, { cogsB2C_or_B2B: a.cogsB2B });
+  const monthCogsRto = computeMonthCogsRto(activeKey);
+  // "Actual" (MTD so far) uses exactly the real-or-estimated sums from
+  // logged days — that IS the actual-to-date figure.
+  const actualRealFigures = { cogsShopify: monthCogsRto.cogsShopify, cogsMarketplace: monthCogsRto.cogsMarketplace, rtoShopify: monthCogsRto.rtoShopify, rtoAmazon: monthCogsRto.rtoAmazon };
+  // Projection = what's already logged (real-or-estimated) + the
+  // assumption-based % applied only to the *remaining* projected
+  // revenue that hasn't been logged yet, so entering real numbers for
+  // more days makes the projection progressively more accurate instead
+  // of double-counting or overwriting logged days.
+  const remainingShopifyRev = Math.max(P.projShopify - monthCogsRto.loggedShopifyRevenue, 0);
+  const remainingAmazonRev = Math.max(P.projMarketplace - monthCogsRto.loggedAmazonRevenue, 0);
+  // B2B COGS — revenue-weighted per client's own COGS % where the B2B
+  // Deals tab has real client data; falls back to the flat cogsB2B
+  // assumption when no client list exists yet (undefined triggers the
+  // fallback inside computeIncomeStatementLine).
+  const b2bClientsForCogs = m.b2bClients || [];
+  const b2bConfirmedCogs = b2bClientsForCogs.filter(c=>c.status==='confirmed').reduce((s,c)=>s+(c.revenue||0)*(c.cogsPct!==undefined?c.cogsPct:a.cogsB2B), 0);
+  const b2bExpectedCogs = b2bClientsForCogs.filter(c=>c.status==='expected').reduce((s,c)=>s+(c.revenue||0)*(c.cogsPct!==undefined?c.cogsPct:a.cogsB2B), 0);
+  const projRealFigures = {
+    cogsShopify: monthCogsRto.cogsShopify + remainingShopifyRev*a.cogsD2C,
+    cogsMarketplace: monthCogsRto.cogsMarketplace + remainingAmazonRev*a.marketplaceCogsPct,
+    rtoShopify: monthCogsRto.rtoShopify + remainingShopifyRev*(a.rtoProvisionPctShopify||0),
+    rtoAmazon: monthCogsRto.rtoAmazon + remainingAmazonRev*(a.rtoProvisionPctAmazon||0),
+    cogsB2B: b2bClientsForCogs.length>0 ? (b2bConfirmedCogs+b2bExpectedCogs) : undefined
+  };
+  if(b2bClientsForCogs.length>0) actualRealFigures.cogsB2B = b2bConfirmedCogs;
+  const actualLine = computeIncomeStatementLine(
+    { shopify:m.mtd.shopifyRevenue, marketplace:m.mtd.marketplaceRevenue, b2b:m.mtd.b2bRevenue, b2c:m.mtd.b2cRevenue, directIncome:m.mtd.directIncome },
+    P.mtdSpend, m.overheads, aWithB2B, actualRealFigures
+  );
+  const projLine = computeIncomeStatementLine(
+    { shopify:P.projShopify, marketplace:P.projMarketplace, b2b:P.projB2B, b2c:P.projB2C, directIncome:P.projDirectIncome },
+    P.projMarketingSpend, m.overheads, aWithB2B, projRealFigures
+  );
+  const label = P.dayInfo.status==='past' ? 'Final' : 'Projected Full Month';
+
+  function isRow(l, r1, r2){
+    return `<tr>
+      <td>${l}</td>
+      <td class="num">${inr(r1)}</td>
+      <td class="num">${inr(r2)}</td>
+    </tr>`;
+  }
+  function isRowPct(l, r1, r1pct, r2, r2pct){
+    return `<tr>
+      <td><b>${l}</b></td>
+      <td class="num"><b>${inr(r1)}</b> <span class="hint">${pct(r1pct)}</span></td>
+      <td class="num"><b>${inr(r2)}</b> <span class="hint">${pct(r2pct)}</span></td>
+    </tr>`;
+  }
+
+  const histRows = REAL_PL_HISTORY.map(h=>`<tr>
+    <td>${h.month}</td>
+    <td class="num">${inr(h.revenue)}</td>
+    <td class="num">${inr(h.cogs)}</td>
+    <td class="num">${pct(h.cm1pct)}</td>
+    <td class="num">${inr(h.marketing)}</td>
+    <td class="num">${pct(h.cm2pct)}</td>
+    <td class="num">${inr(h.tech)}</td>
+    <td class="num">${pct(h.cm3pct)}</td>
+    <td class="num" style="color:${h.netProfit<0?'var(--danger)':'inherit'}">${inr(h.netProfit)}</td>
+    <td class="num">${pct(h.netMargin)}</td>
+  </tr>`).join('');
+
+  el('panel-income').innerHTML = `
+    <div class="assumption-note"><b>Source:</b> real monthly P&L from your income statement workbook (Apr–Jun 2026 actuals). This tab is the master financial view — everything below is built from the same targets/actuals as Overview, plus editable overheads, and flows through to both marketing consoles as redacted ceilings only.</div>
+
+    <div class="section-title">Real Monthly P&amp;L History <span class="n">from your workbook</span></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Month</th><th class="num">Revenue</th><th class="num">COGS</th><th class="num">CM1%</th><th class="num">Marketing</th><th class="num">CM2%</th><th class="num">Tech</th><th class="num">CM3%</th><th class="num">Net Profit</th><th class="num">NP%</th></tr></thead>
+      <tbody>${histRows}</tbody>
+    </table></div>
+    <div class="hint" style="margin-top:6px;">Trailing 3-mo avg used as defaults below: COGS ${pct(REAL_PL_TRAILING_AVG.cogsPct)} of revenue, Marketing ${pct(REAL_PL_TRAILING_AVG.marketingPct)} of revenue, Tech ${inr(REAL_PL_TRAILING_AVG.tech)}, Operating ${inr(REAL_PL_TRAILING_AVG.operating)}, Admin ${inr(REAL_PL_TRAILING_AVG.admin)}. Real COGS is running notably higher than the 15% D2C assumption used in the CM tab — worth reconciling.</div>
+
+    <div class="section-title">${monthLabel(activeKey)} — Additional Revenue Lines <span class="n">editable, paced like Shopify/Marketplace</span></div>
+    <div class="grid grid-4">
+      <div class="card"><label class="field">B2B Revenue (₹, MTD)</label><div class="mono" style="font-size:16px;padding:8px 0;">${inr(m.mtd.b2bRevenue)}</div><div class="hint">From confirmed deals in the B2B Deals tab — not editable here</div></div>
+      <div class="card"><label class="field">B2B COGS %</label><input type="number" step="0.1" value="${(a.cogsB2B*100).toFixed(2)}" data-fid="assum-cogsB2B" onchange="updateAssumption('cogsB2B', this.value, true)"/><div class="hint">Applied to B2B revenue only</div></div>
+      <div class="card"><label class="field">B2C Revenue (₹, MTD)</label><input type="number" value="${m.mtd.b2cRevenue}" data-fid="mtd-b2cRevenue" oninput="updateMtd('b2cRevenue', this.value)"/></div>
+      <div class="card"><label class="field">Direct Income — COD charges etc. (₹, MTD)</label><input type="number" value="${m.mtd.directIncome}" data-fid="mtd-directIncome" oninput="updateMtd('directIncome', this.value)"/><div class="hint">Trailing avg: ${inr(REAL_PL_TRAILING_AVG.directIncome)}/mo</div></div>
+    </div>
+
+    <div class="section-title">${monthLabel(activeKey)} — Full Company P&amp;L <span class="n">broader view: includes B2B/B2C/Direct Income and Net Profit, not just CM1-CM3 above</span></div>
+    <div class="assumption-note">Marketing &amp; Branding Expenses below is <b>not</b> separately typed — it's your MTD actual ad spend (Meta+Google+Amazon Ads from Overview) projected to a full month at the same daily pace as revenue. Change ad spend in Overview, not here.</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Line</th><th class="num">MTD Actual</th><th class="num">${label}</th></tr></thead>
+      <tbody>
+        ${isRow('Shopify Revenue', m.mtd.shopifyRevenue, P.projShopify)}
+        ${isRow('Marketplace Revenue', m.mtd.marketplaceRevenue, P.projMarketplace)}
+        ${isRow('B2B Revenue', m.mtd.b2bRevenue, P.projB2B)}
+        ${isRow('B2C Revenue', m.mtd.b2cRevenue, P.projB2C)}
+        ${isRow('Direct Income', m.mtd.directIncome, P.projDirectIncome)}
+        ${isRow('Total Revenue', actualLine.totalRevenue, projLine.totalRevenue)}
+        ${isRow('COGS', -actualLine.totalCogs, -projLine.totalCogs)}
+        ${isRow('Direct Expenses', -actualLine.directExpenses, -projLine.directExpenses)}
+        ${isRowPct('CM1', actualLine.cm1, actualLine.cm1pct, projLine.cm1, projLine.cm1pct)}
+        ${isRow('Marketing & Branding (from ad spend pace)', -actualLine.marketingSpend, -projLine.marketingSpend)}
+        ${isRowPct('CM2', actualLine.cm2, actualLine.cm2pct, projLine.cm2, projLine.cm2pct)}
+        ${isRow('Technology & Platform', -actualLine.tech, -projLine.tech)}
+        ${isRow('RTO Provision (Shopify + Amazon, estimate)', -actualLine.rtoProvisionTotal, -projLine.rtoProvisionTotal)}
+        ${isRowPct('CM3', actualLine.cm3, actualLine.cm3pct, projLine.cm3, projLine.cm3pct)}
+        ${isRow('Other Indirect Expenses', -actualLine.otherIndirect, -projLine.otherIndirect)}
+        ${isRow('Indirect Income', actualLine.indirectIncome, projLine.indirectIncome)}
+        ${isRowPct('Net Profit', actualLine.netProfit, actualLine.netMargin, projLine.netProfit, projLine.netMargin)}
+      </tbody>
+    </table></div>
+    <div class="assumption-note" style="margin-top:10px;border-color:${projLine.netProfit<0?'var(--danger)':'var(--good)'};background:${projLine.netProfit<0?'var(--danger-soft)':'var(--accent-soft)'};color:${projLine.netProfit<0?'var(--danger)':'var(--accent-ink)'};"><b>Projected ${monthLabel(activeKey)} Net Profit: ${inr(projLine.netProfit)} (${pct(projLine.netMargin)} margin)</b> at current pace, assumptions, and overheads (see the Expenses &amp; Overheads tab).</div>
+
 
     ${(function(){
       const prevKey = prevMonthKey(activeKey);
@@ -2234,6 +2419,8 @@ async function init(){
   renderOverview();
   renderIncome();
   renderProfitability();
+  renderExpenses();
+  renderB2B();
   renderMargin();
   renderCatalog();
 }
