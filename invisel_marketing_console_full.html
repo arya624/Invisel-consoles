@@ -438,7 +438,7 @@ async function syncSet(key, value){
   try{ await window.storage.set(key, value, true); return true; }catch(e){ return false; }
 }
 
-const COST_FIELDS_NEVER_HELD_HERE = ['cogsD2C','cogsB2B','marketplaceCogsPct','amazonCommissionPct','d2cShippingPct','marketplaceShippingPct','gstCancelRtoPct','rtoProvisionPctShopify','rtoProvisionPctAmazon'];
+const COST_FIELDS_NEVER_HELD_HERE = ['cogsD2C','cogsB2B','marketplaceCogsPct','amazonCommissionPct','d2cShippingPct','marketplaceShippingPct','gstCancelRtoPct','rtoProvisionPctShopify','rtoProvisionPctAmazon','byobTaxPct','byobPgfPct','byobCac'];
 
 let saveTimer = null;
 async function loadState(){
@@ -1529,15 +1529,15 @@ function renderCustomer(){
   const rulesRows = state.retentionRules.map((r,i)=>`
     <tr>
       <td>${r.category}</td>
-      <td><input type="number" value="${r.months}" step="0.5" style="width:70px" oninput="updateRetentionRule(${i},'months',this.value)"/> mo</td>
-      <td><input type="text" value="${r.crossSell}" oninput="updateRetentionRule(${i},'crossSell',this.value)"/></td>
+      <td><input type="number" value="${r.months}" step="0.5" style="width:70px" data-fid="rr-months-${i}" oninput="updateRetentionRule(${i},'months',this.value)"/> mo</td>
+      <td><input type="text" value="${r.crossSell}" data-fid="rr-crossSell-${i}" oninput="updateRetentionRule(${i},'crossSell',this.value)"/></td>
     </tr>`).join('');
 
   const playbookRows = state.offerPlaybook.map((p,i)=>`
     <tr>
       <td><b>${p.segment}</b><div class="hint">${p.trigger}</div></td>
-      <td><input type="text" value="${p.action}" style="width:100%" oninput="updateOfferPlaybook(${i},'action',this.value)"/></td>
-      <td><input type="text" value="${p.discount}" style="width:170px" oninput="updateOfferPlaybook(${i},'discount',this.value)"/></td>
+      <td><input type="text" value="${p.action}" style="width:100%" data-fid="op-action-${i}" oninput="updateOfferPlaybook(${i},'action',this.value)"/></td>
+      <td><input type="text" value="${p.discount}" style="width:170px" data-fid="op-discount-${i}" oninput="updateOfferPlaybook(${i},'discount',this.value)"/></td>
     </tr>`).join('');
 
   function segmentAffinityBlock(s, isSample){

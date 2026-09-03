@@ -1544,10 +1544,10 @@ function renderProfitability(){
     <div class="section-title">RTO Provision, Tax &amp; PGF <span class="n">rates used by both Daily and MTD Profitability below</span></div>
     <div class="assumption-note">RTO defaults to 0% (no trailing average assumed, since there's no return data behind it). Tax and PGF default to your real BYOB sheet rates (18% GST, 0.9% payment gateway). All four apply automatically in the profitability views below — change them here, not there.</div>
     <div class="grid grid-4">
-      <div class="card"><label class="field">Shopify RTO Provision %</label><input type="number" step="0.1" value="${(a.rtoProvisionPctShopify*100).toFixed(2)}" data-fid="assum-rtoProvisionPctShopify" oninput="updateAssumption('rtoProvisionPctShopify', this.value, true)"/></div>
-      <div class="card"><label class="field">Amazon RTO Provision %</label><input type="number" step="0.1" value="${(a.rtoProvisionPctAmazon*100).toFixed(2)}" data-fid="assum-rtoProvisionPctAmazon" oninput="updateAssumption('rtoProvisionPctAmazon', this.value, true)"/></div>
-      <div class="card"><label class="field">Tax % (GST)</label><input type="number" step="0.1" value="${(a.byobTaxPct*100).toFixed(2)}" data-fid="assum-byobTaxPct-income" oninput="updateAssumption('byobTaxPct', this.value, true)"/></div>
-      <div class="card"><label class="field">PGF % (Payment Gateway)</label><input type="number" step="0.01" value="${(a.byobPgfPct*100).toFixed(2)}" data-fid="assum-byobPgfPct-income" oninput="updateAssumption('byobPgfPct', this.value, true)"/></div>
+      <div class="card"><label class="field">Shopify RTO Provision %</label><input type="number" step="0.1" value="${(a.rtoProvisionPctShopify*100).toFixed(2)}" data-fid="assum-rtoProvisionPctShopify" onchange="updateAssumption('rtoProvisionPctShopify', this.value, true)"/></div>
+      <div class="card"><label class="field">Amazon RTO Provision %</label><input type="number" step="0.1" value="${(a.rtoProvisionPctAmazon*100).toFixed(2)}" data-fid="assum-rtoProvisionPctAmazon" onchange="updateAssumption('rtoProvisionPctAmazon', this.value, true)"/></div>
+      <div class="card"><label class="field">Tax % (GST)</label><input type="number" step="0.1" value="${(a.byobTaxPct*100).toFixed(2)}" data-fid="assum-byobTaxPct-income" onchange="updateAssumption('byobTaxPct', this.value, true)"/></div>
+      <div class="card"><label class="field">PGF % (Payment Gateway)</label><input type="number" step="0.01" value="${(a.byobPgfPct*100).toFixed(2)}" data-fid="assum-byobPgfPct-income" onchange="updateAssumption('byobPgfPct', this.value, true)"/></div>
     </div>
 
     ${(function(){
@@ -1655,10 +1655,56 @@ function renderProfitability(){
         </div>
         `}
       </div>
+
+      ${(function(){
+        if(loggedDays.length===0) return '';
+        const points = loggedDays.map(d=>{
+          const e = m.dailyLog[d];
+          const w = computeProfitabilityWaterfall(
+            { shopifyRevenue: e.websiteRevenue||0, amazonRevenue: e.amazonRevenue||0,
+              shopifyCogs: e.shopifyCogs, amazonCogs: e.amazonCogs,
+              rtoShopify: e.rtoActualShopify, rtoAmazon: e.rtoActualAmazon },
+            (e.metaSpend||0)+(e.googleSpend||0)+(e.amazonSpend||0),
+            dailyOverheads, a
+          );
+          return { day: d, revenue: w.grossRevenue, cm3: w.cm3 };
+        });
+        const w = 700, h = 170, padding = 30;
+        const maxRev = Math.max(...points.map(p=>p.revenue), 1);
+        const cm3Vals = points.map(p=>p.cm3);
+        const minCm3 = Math.min(...cm3Vals, 0);
+        const maxCm3 = Math.max(...cm3Vals, 0);
+        const cm3Range = (maxCm3-minCm3) || 1;
+        const slot = (w-padding*2)/Math.max(points.length-1,1);
+        const zeroY = h-padding - ((0-minCm3)/cm3Range)*(h-padding*2);
+
+        let barsAndLine = '', line = '';
+        const coords = points.map((p,i)=>{
+          const x = padding + i*slot;
+          const barH = (p.revenue/maxRev)*(h-padding*2)*0.55;
+          const cm3Y = h-padding - ((p.cm3-minCm3)/cm3Range)*(h-padding*2);
+          return {x, barH, cm3Y, p};
+        });
+        coords.forEach((c,i)=>{
+          barsAndLine += `<rect x="${(c.x-slot*0.28).toFixed(1)}" y="${(h-padding-c.barH).toFixed(1)}" width="${(slot*0.56).toFixed(1)}" height="${c.barH.toFixed(1)}" fill="#DBE2DF" rx="2"/>`;
+          barsAndLine += `<circle cx="${c.x.toFixed(1)}" cy="${c.cm3Y.toFixed(1)}" r="3.5" fill="${c.p.cm3<0?'#FF6B6B':'#0C8C82'}"><title>${monthLabel(activeKey).split(' ')[0]} ${c.p.day}: Revenue ${inr(c.p.revenue)}, CM3 ${inr(c.p.cm3)}</title></circle>`;
+          barsAndLine += `<text x="${c.x.toFixed(1)}" y="${h-8}" font-size="9" fill="#57626C" text-anchor="middle">${c.p.day}</text>`;
+          if(i>0) line += `<line x1="${coords[i-1].x.toFixed(1)}" y1="${coords[i-1].cm3Y.toFixed(1)}" x2="${c.x.toFixed(1)}" y2="${c.cm3Y.toFixed(1)}" stroke="#0C8C82" stroke-width="1.5"/>`;
+        });
+
+        return `
+        <div class="section-title" style="margin-top:16px;">Daily Profitability Trend <span class="n">updates automatically as you log more days — Revenue (bars) and CM3 (line)</span></div>
+        <div class="card">
+          <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:170px;">
+            <line x1="${padding}" y1="${zeroY.toFixed(1)}" x2="${w-padding}" y2="${zeroY.toFixed(1)}" stroke="#DBE2DF" stroke-dasharray="3,3"/>
+            ${barsAndLine}${line}
+          </svg>
+          <div class="hint">Grey bars = daily revenue (scaled to the busiest day). Green/red line = daily CM3, dashed line = breakeven. Dot color flips red when that day's CM3 goes negative.</div>
+        </div>
+        `;
+      })()}
       `;
     })()}
-
-    </div>
 
   `;
 }
@@ -1749,7 +1795,7 @@ function renderIncome(){
     <div class="section-title">${monthLabel(activeKey)} — Additional Revenue Lines <span class="n">editable, paced like Shopify/Marketplace</span></div>
     <div class="grid grid-4">
       <div class="card"><label class="field">B2B Revenue (₹, MTD)</label><input type="number" value="${m.mtd.b2bRevenue}" data-fid="mtd-b2bRevenue" oninput="updateMtd('b2bRevenue', this.value)"/><div class="hint">Trailing avg: ${inr(REAL_PL_TRAILING_AVG.b2b)}/mo</div></div>
-      <div class="card"><label class="field">B2B COGS %</label><input type="number" step="0.1" value="${(a.cogsB2B*100).toFixed(2)}" data-fid="assum-cogsB2B" oninput="updateAssumption('cogsB2B', this.value, true)"/><div class="hint">Applied to B2B revenue only</div></div>
+      <div class="card"><label class="field">B2B COGS %</label><input type="number" step="0.1" value="${(a.cogsB2B*100).toFixed(2)}" data-fid="assum-cogsB2B" onchange="updateAssumption('cogsB2B', this.value, true)"/><div class="hint">Applied to B2B revenue only</div></div>
       <div class="card"><label class="field">B2C Revenue (₹, MTD)</label><input type="number" value="${m.mtd.b2cRevenue}" data-fid="mtd-b2cRevenue" oninput="updateMtd('b2cRevenue', this.value)"/></div>
       <div class="card"><label class="field">Direct Income — COD charges etc. (₹, MTD)</label><input type="number" value="${m.mtd.directIncome}" data-fid="mtd-directIncome" oninput="updateMtd('directIncome', this.value)"/><div class="hint">Trailing avg: ${inr(REAL_PL_TRAILING_AVG.directIncome)}/mo</div></div>
     </div>
@@ -1931,13 +1977,13 @@ function renderIncome(){
       if(nm.targets.amazonAdSpendBudget===undefined) nm.targets.amazonAdSpendBudget = 0;
       if(!nm.overheads) nm.overheads = [];
       const nmOverheadRows = nm.overheads.map((o,i)=>`<tr>
-        <td><input type="text" value="${o.name}" oninput="updateNextMonthOverheadRow(${i},'name',this.value)" style="width:100%"/></td>
+        <td><input type="text" value="${o.name}" data-fid="nm-oh-name-${i}" oninput="updateNextMonthOverheadRow(${i},'name',this.value)" style="width:100%"/></td>
         <td>
           <select onchange="updateNextMonthOverheadRow(${i},'category',this.value)">
             ${['Direct Expense','Technology & Platform','Rent','Salaries','Tools/Software','Agency Fees','Other Variable','Operating','Administrative & General','Other Indirect','Indirect Income'].map(c=>`<option value="${c}" ${o.category===c?'selected':''}>${c}</option>`).join('')}
           </select>
         </td>
-        <td class="num"><input type="number" value="${o.amount}" oninput="updateNextMonthOverheadRow(${i},'amount',this.value)" style="width:110px"/></td>
+        <td class="num"><input type="number" value="${o.amount}" data-fid="nm-oh-amt-${i}" oninput="updateNextMonthOverheadRow(${i},'amount',this.value)" style="width:110px"/></td>
         <td><button class="btn ghost small" onclick="removeNextMonthOverheadRow(${i})">remove</button></td>
       </tr>`).join('');
       const nmTotalOverheads = nm.overheads.reduce((s,o)=>s+(o.amount||0),0);
@@ -1948,11 +1994,11 @@ function renderIncome(){
         <div class="assumption-note">Planning ahead — this doesn't affect ${monthLabel(activeKey)}. Once ${monthLabel(nextKey)} actually starts, switch to it from the month selector at the top (or the button below) and it becomes the live active month, same as any other.</div>
 
         <div class="grid grid-3">
-          <div class="card"><label class="field">Total Revenue Target (₹)</label><input type="number" value="${nm.targets.total}" oninput="updateNextMonthTarget('total', this.value)"/><div class="hint">${inrLakh(nm.targets.total)}</div></div>
-          <div class="card"><label class="field">Shopify Target (₹)</label><input type="number" value="${nm.targets.shopify}" oninput="updateNextMonthTarget('shopify', this.value)"/><div class="hint">${inrLakh(nm.targets.shopify)}</div></div>
-          <div class="card"><label class="field">Marketplace Target (₹)</label><input type="number" value="${nm.targets.marketplace}" oninput="updateNextMonthTarget('marketplace', this.value)"/><div class="hint">${inrLakh(nm.targets.marketplace)}</div></div>
-          <div class="card"><label class="field">Meta+Google Ad Spend Budget (₹)</label><input type="number" value="${nm.targets.metaGoogleAdSpendBudget}" oninput="updateNextMonthTarget('metaGoogleAdSpendBudget', this.value)"/><div class="hint">${inrLakh(nm.targets.metaGoogleAdSpendBudget)}</div></div>
-          <div class="card"><label class="field">Amazon Ad Spend Budget (₹)</label><input type="number" value="${nm.targets.amazonAdSpendBudget}" oninput="updateNextMonthTarget('amazonAdSpendBudget', this.value)"/><div class="hint">${inrLakh(nm.targets.amazonAdSpendBudget)}</div></div>
+          <div class="card"><label class="field">Total Revenue Target (₹)</label><input type="number" value="${nm.targets.total}" data-fid="nm-target-total" oninput="updateNextMonthTarget('total', this.value)"/><div class="hint">${inrLakh(nm.targets.total)}</div></div>
+          <div class="card"><label class="field">Shopify Target (₹)</label><input type="number" value="${nm.targets.shopify}" data-fid="nm-target-shopify" oninput="updateNextMonthTarget('shopify', this.value)"/><div class="hint">${inrLakh(nm.targets.shopify)}</div></div>
+          <div class="card"><label class="field">Marketplace Target (₹)</label><input type="number" value="${nm.targets.marketplace}" data-fid="nm-target-marketplace" oninput="updateNextMonthTarget('marketplace', this.value)"/><div class="hint">${inrLakh(nm.targets.marketplace)}</div></div>
+          <div class="card"><label class="field">Meta+Google Ad Spend Budget (₹)</label><input type="number" value="${nm.targets.metaGoogleAdSpendBudget}" data-fid="nm-target-metaGoogleAdSpendBudget" oninput="updateNextMonthTarget('metaGoogleAdSpendBudget', this.value)"/><div class="hint">${inrLakh(nm.targets.metaGoogleAdSpendBudget)}</div></div>
+          <div class="card"><label class="field">Amazon Ad Spend Budget (₹)</label><input type="number" value="${nm.targets.amazonAdSpendBudget}" data-fid="nm-target-amazonAdSpendBudget" oninput="updateNextMonthTarget('amazonAdSpendBudget', this.value)"/><div class="hint">${inrLakh(nm.targets.amazonAdSpendBudget)}</div></div>
           <div class="card kpi"><div class="label">Total Planned Ad Spend</div><div class="value">${inr(nmTotalAdBudget)}</div></div>
         </div>
 
@@ -2015,14 +2061,14 @@ function renderMargin(){
 
     <div class="section-title">Assumptions <span class="n">editable</span></div>
     <div class="grid grid-4">
-      <div class="card"><label class="field">D2C COGS %</label><input type="number" step="0.1" value="${(a.cogsD2C*100).toFixed(2)}" data-fid="assum-cogsD2C" oninput="updateAssumption('cogsD2C', this.value, true)"/></div>
-      <div class="card"><label class="field">Marketplace COGS %</label><input type="number" step="0.1" value="${(a.marketplaceCogsPct*100).toFixed(2)}" data-fid="assum-marketplaceCogsPct" oninput="updateAssumption('marketplaceCogsPct', this.value, true)"/><div class="hint">B2B reference: 57% <button class="btn ghost small" style="margin-top:4px" onclick="updateAssumption('marketplaceCogsPct', 57, true); renderMargin();">use B2B%</button></div></div>
-      <div class="card"><label class="field">Amazon Commission %</label><input type="number" step="0.1" value="${(a.amazonCommissionPct*100).toFixed(2)}" data-fid="assum-amazonCommissionPct" oninput="updateAssumption('amazonCommissionPct', this.value, true)"/></div>
-      <div class="card"><label class="field">GST + Cancellation + RTO %</label><input type="number" step="0.1" value="${(a.gstCancelRtoPct*100).toFixed(2)}" data-fid="assum-gstCancelRtoPct" oninput="updateAssumption('gstCancelRtoPct', this.value, true)"/></div>
-      <div class="card"><label class="field">D2C Shipping % of Net Revenue</label><input type="number" step="0.1" value="${(a.d2cShippingPct*100).toFixed(2)}" data-fid="assum-d2cShippingPct" oninput="updateAssumption('d2cShippingPct', this.value, true)"/></div>
-      <div class="card"><label class="field">Marketplace Shipping %</label><input type="number" step="0.1" value="${(a.marketplaceShippingPct*100).toFixed(2)}" data-fid="assum-marketplaceShippingPct" oninput="updateAssumption('marketplaceShippingPct', this.value, true)"/><div class="hint">0 if FBA/seller-fulfilled cost sits elsewhere</div></div>
-      <div class="card"><label class="field">Meta+Google Spend Allocation %</label><input type="number" step="0.1" value="${(a.metaGoogleAllocPct*100).toFixed(2)}" data-fid="assum-metaGoogleAllocPct" oninput="updateAssumption('metaGoogleAllocPct', this.value, true)"/></div>
-      <div class="card"><label class="field">Amazon Ads Spend Allocation %</label><input type="number" step="0.1" value="${(a.amazonAdsAllocPct*100).toFixed(2)}" data-fid="assum-amazonAdsAllocPct" oninput="updateAssumption('amazonAdsAllocPct', this.value, true)"/></div>
+      <div class="card"><label class="field">D2C COGS %</label><input type="number" step="0.1" value="${(a.cogsD2C*100).toFixed(2)}" data-fid="assum-cogsD2C" onchange="updateAssumption('cogsD2C', this.value, true)"/></div>
+      <div class="card"><label class="field">Marketplace COGS %</label><input type="number" step="0.1" value="${(a.marketplaceCogsPct*100).toFixed(2)}" data-fid="assum-marketplaceCogsPct" onchange="updateAssumption('marketplaceCogsPct', this.value, true)"/><div class="hint">B2B reference: 57% <button class="btn ghost small" style="margin-top:4px" onclick="updateAssumption('marketplaceCogsPct', 57, true); renderMargin();">use B2B%</button></div></div>
+      <div class="card"><label class="field">Amazon Commission %</label><input type="number" step="0.1" value="${(a.amazonCommissionPct*100).toFixed(2)}" data-fid="assum-amazonCommissionPct" onchange="updateAssumption('amazonCommissionPct', this.value, true)"/></div>
+      <div class="card"><label class="field">GST + Cancellation + RTO %</label><input type="number" step="0.1" value="${(a.gstCancelRtoPct*100).toFixed(2)}" data-fid="assum-gstCancelRtoPct" onchange="updateAssumption('gstCancelRtoPct', this.value, true)"/></div>
+      <div class="card"><label class="field">D2C Shipping % of Net Revenue</label><input type="number" step="0.1" value="${(a.d2cShippingPct*100).toFixed(2)}" data-fid="assum-d2cShippingPct" onchange="updateAssumption('d2cShippingPct', this.value, true)"/></div>
+      <div class="card"><label class="field">Marketplace Shipping %</label><input type="number" step="0.1" value="${(a.marketplaceShippingPct*100).toFixed(2)}" data-fid="assum-marketplaceShippingPct" onchange="updateAssumption('marketplaceShippingPct', this.value, true)"/><div class="hint">0 if FBA/seller-fulfilled cost sits elsewhere</div></div>
+      <div class="card"><label class="field">Meta+Google Spend Allocation %</label><input type="number" step="0.1" value="${(a.metaGoogleAllocPct*100).toFixed(2)}" data-fid="assum-metaGoogleAllocPct" onchange="updateAssumption('metaGoogleAllocPct', this.value, true)"/></div>
+      <div class="card"><label class="field">Amazon Ads Spend Allocation %</label><input type="number" step="0.1" value="${(a.amazonAdsAllocPct*100).toFixed(2)}" data-fid="assum-amazonAdsAllocPct" onchange="updateAssumption('amazonAdsAllocPct', this.value, true)"/></div>
       <div class="card"><label class="field">Blended ROAS Target (fixed)</label><input type="number" step="0.01" value="${a.blendedRoasTarget}" data-fid="assum-blendedRoasTarget" oninput="updateAssumption('blendedRoasTarget', this.value, false)"/></div>
       <div class="card"><label class="field">Incremental ROAS Target</label><input type="number" step="0.01" value="${a.incrementalRoasTarget}" data-fid="assum-incrementalRoasTarget" oninput="updateAssumption('incrementalRoasTarget', this.value, false)"/></div>
     </div>
@@ -2071,8 +2117,8 @@ function renderCatalog(){
     <div class="section-title">Discount &amp; Bundle Floor Settings <span class="n">used to compute ceilings published to Marketing</span></div>
     <div class="assumption-note">Marketing consoles read these floors to show discount/bundle ceilings but can't edit them — this is the only place to change them now that Discount/Bundle Engine tabs have moved to Marketing Full.</div>
     <div class="grid grid-2">
-      <div class="card"><label class="field">Discount Floor %</label><input type="number" step="0.1" value="${(state.discountFloorPct*100).toFixed(2)}" data-fid="discount-floor" oninput="setDiscountFloor(this.value)"/><div class="hint">Minimum margin % to protect on any single-SKU discount</div></div>
-      <div class="card"><label class="field">Bundle Floor %</label><input type="number" step="0.1" value="${(state.bundleFloorPct*100).toFixed(2)}" data-fid="bundle-floor" oninput="setBundleFloor(this.value)"/><div class="hint">Minimum margin % to protect on any bundle</div></div>
+      <div class="card"><label class="field">Discount Floor %</label><input type="number" step="0.1" value="${(state.discountFloorPct*100).toFixed(2)}" data-fid="discount-floor" onchange="setDiscountFloor(this.value)"/><div class="hint">Minimum margin % to protect on any single-SKU discount</div></div>
+      <div class="card"><label class="field">Bundle Floor %</label><input type="number" step="0.1" value="${(state.bundleFloorPct*100).toFixed(2)}" data-fid="bundle-floor" onchange="setBundleFloor(this.value)"/><div class="hint">Minimum margin % to protect on any bundle</div></div>
     </div>
 
     <div class="section-title">SKU Catalog <span class="n">${CATALOG.length} SKUs · editable</span></div>
@@ -2129,8 +2175,8 @@ function renderCatalog(){
         <div class="section-title" style="margin-top:20px;">BYOB CM1 / CM2 Profitability <span class="n">per-SKU waterfall — Tax, COGS, Shipping, PGF, CAC</span></div>
         <div class="assumption-note">Separate from the margin table above — this mirrors your BYOB CM2 sheet exactly: CM1 = Price − Tax − COGS − Shipping − PGF. CM2 = CM1 − CAC. Tax and PGF are computed as % of price; Shipping is editable per SKU; CAC is a single shared assumption applied to every SKU.</div>
         <div class="grid grid-3">
-          <div class="card"><label class="field">Tax % (GST)</label><input type="number" step="0.1" value="${(a.byobTaxPct*100).toFixed(2)}" data-fid="assum-byobTaxPct" oninput="updateAssumption('byobTaxPct', this.value, true)"/></div>
-          <div class="card"><label class="field">PGF % (Payment Gateway Fee)</label><input type="number" step="0.01" value="${(a.byobPgfPct*100).toFixed(2)}" data-fid="assum-byobPgfPct" oninput="updateAssumption('byobPgfPct', this.value, true)"/></div>
+          <div class="card"><label class="field">Tax % (GST)</label><input type="number" step="0.1" value="${(a.byobTaxPct*100).toFixed(2)}" data-fid="assum-byobTaxPct" onchange="updateAssumption('byobTaxPct', this.value, true)"/></div>
+          <div class="card"><label class="field">PGF % (Payment Gateway Fee)</label><input type="number" step="0.01" value="${(a.byobPgfPct*100).toFixed(2)}" data-fid="assum-byobPgfPct" onchange="updateAssumption('byobPgfPct', this.value, true)"/></div>
           <div class="card"><label class="field">CAC (₹, shared across SKUs)</label><input type="number" value="${a.byobCac}" data-fid="assum-byobCac" oninput="updateAssumption('byobCac', this.value, false)"/></div>
         </div>
 
