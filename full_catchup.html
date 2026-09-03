@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Invisel — Full Catch-Up (Aug 9 - Sep 2)</title>
+<style>
+  body{font-family:'IBM Plex Mono',monospace;background:#0F1419;color:#E6EDEA;padding:30px;max-width:1000px;margin:0 auto;}
+  h1{font-family:sans-serif;font-size:20px;color:#fff;}
+  h2{font-family:sans-serif;font-size:14px;color:#fff;margin-top:24px;}
+  p{font-family:sans-serif;font-size:13.5px;color:#B7C2C7;line-height:1.6;}
+  table{width:100%;border-collapse:collapse;font-size:11px;margin:12px 0;}
+  th,td{padding:4px 7px;border-bottom:1px solid #2A343A;text-align:right;}
+  th:first-child,td:first-child{text-align:left;}
+  th{color:#8A9AA3;font-weight:600;text-transform:uppercase;font-size:9px;}
+  .diff{color:#F0C868;font-weight:600;}
+  .same{color:#5A6A70;}
+  .btn{background:#0C8C82;color:#fff;border:none;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:sans-serif;}
+  .btn:hover{background:#075E57;}
+  .btn:disabled{background:#3A444A;cursor:not-allowed;}
+  #status{margin-top:16px;padding:14px 16px;border-radius:8px;font-family:sans-serif;font-size:13.5px;display:none;white-space:pre-wrap;line-height:1.6;}
+  .status-ok{background:#123324;border:1px solid #3ED598;color:#3ED598;}
+  .status-err{background:#3A1A1A;border:1px solid #FF6B6B;color:#FF6B6B;}
+  .status-progress{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;}
+  .warn{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13.5px;line-height:1.5;}
+  .note{background:#161D22;border:1px solid #2A343A;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13px;color:#B7C2C7;line-height:1.6;}
+</style>
+</head>
+<body>
+<h1>Full Catch-Up — Website, Amazon (+B2B), Meta, Google</h1>
+
+<div class="warn">
+  <b>Two totals don't add up to what you pasted, and I want to flag this before applying anything:</b><br/>
+  Amazon Ordered Product Sales — your day-by-day rows sum to ₹20,18,720.85, but your stated Total was ₹25,26,082.85 (short by exactly ₹5,07,362.00).<br/>
+  Amazon B2B — day-by-day sums to ₹89,529.80, stated Total was ₹1,13,748.80 (short by exactly ₹24,219.00).<br/>
+  Both gaps are suspiciously round numbers, which suggests your original sheet had rows before Aug 9 that didn't make it into what got pasted here — this tool only applies the day-by-day figures you gave me, not the Totals. Worth double-checking your source sheet for rows before Aug 9.
+  <br/><br/>Website Sales total is off by exactly ₹1.00 from your stated total — that's rounding, not a real gap.
+</div>
+
+<div class="note">
+  <b>Amazon B2B</b> has no daily field in the console (it's tracked as a single MTD number, same as B2B always has been) — so this tool sums B2B per month and sets August's and September's MTD B2B Revenue directly, rather than per-day.
+</div>
+
+<p id="loadingMsg">Loading current live data for comparison...</p>
+<div id="tables"></div>
+
+<button class="btn" id="importBtn" onclick="runUpdate()" disabled>Loading comparison first...</button>
+<div id="status"></div>
+
+<script>
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx7Iu7XJlvEQGQRfS8gBzleETxvCeqAHtVMRty0hIHy9IKtiLo9gxP9-sGN1Xw6Gymr/exec";
+const WRITE_TOKEN = "invisel-2026-9x7q2m";
+
+const WEBSITE = { "2026-08": {"25":157221.92,"26":199461.06,"27":174327.94,"28":152654.58,"29":227154.18,"30":256259.74,"31":224671.72}, "2026-09": {"1":237317.90,"2":216803.14} };
+const AMAZON_REV = { "2026-08": {"9":115645.05,"10":95337.00,"11":80020.00,"12":90007.00,"13":61675.20,"14":66168.00,"15":49920.20,"16":79007.80,"17":55961.20,"18":62666.20,"19":35915.00,"20":46552.20,"21":57656.80,"22":89186.60,"23":94754.20,"24":94512.80,"25":83625.00,"26":83949.60,"27":103777.80,"28":82333.80,"29":77396.00,"30":76421.60,"31":93885.80}, "2026-09": {"1":113600.00,"2":128746.00} };
+const AMAZON_B2B = { "2026-08": {"9":3614.00,"10":8690.00,"11":0.00,"12":1140.00,"13":3585.00,"14":3542.00,"15":7949.00,"16":2320.00,"17":1698.00,"18":3445.20,"19":3057.00,"20":379.00,"21":2279.00,"22":1376.00,"23":4861.00,"24":2320.00,"25":1228.00,"26":2770.00,"27":2360.00,"28":2751.00,"29":4599.00,"30":0.00,"31":10266.60}, "2026-09": {"1":4376.00,"2":10924.00} };
+const META = { "2026-08": {"25":114310.26,"26":128062.66,"27":129160.42,"28":111843.44,"29":132098.52,"30":172651.14,"31":140813.28}, "2026-09": {"1":139327.45,"2":144306.25} };
+const GOOGLE = { "2026-08": {"25":6221.33,"26":5538.95,"27":12974.37} }; // Aug 28 onward: 0, not yet reported — not applied
+
+function inr(n){ return "Rs " + Math.round(n).toLocaleString('en-IN'); }
+
+let cachedState = null;
+
+function ensureMonthLocal(state, monthKey){
+  if(!state.months) state.months = {};
+  if(!state.months[monthKey]){
+    state.months[monthKey] = {
+      targets: { total: 0, shopify: 0, marketplace: 0, metaGoogleAdSpendBudget: 0, amazonAdSpendBudget: 0 },
+      mtd: { shopifyRevenue: 0, marketplaceRevenue: 0, metaGoogleSpend: 0, amazonAdsSpend: 0, b2bRevenue: 0, b2cRevenue: 0, directIncome: 0 },
+      overheads: [], dailyLog: {}
+    };
+  }
+  if(!state.months[monthKey].dailyLog) state.months[monthKey].dailyLog = {};
+  if(!state.months[monthKey].mtd) state.months[monthKey].mtd = { shopifyRevenue:0, marketplaceRevenue:0, metaGoogleSpend:0, amazonAdsSpend:0, b2bRevenue:0, b2cRevenue:0, directIncome:0 };
+  return state.months[monthKey];
+}
+
+function buildTable(title, dataset, currentGetter){
+  let rows = '';
+  Object.keys(dataset).sort().forEach(function(monthKey){
+    Object.keys(dataset[monthKey]).map(Number).sort((a,b)=>a-b).forEach(function(day){
+      const val = dataset[monthKey][String(day)];
+      const cur = currentGetter(monthKey, String(day));
+      const differs = Math.abs(cur-val) > 0.5;
+      rows += "<tr><td>" + monthKey + "-" + String(day).padStart(2,'0') + "</td><td>" + inr(cur) + "</td><td class='" + (differs?'diff':'same') + "'>" + inr(val) + "</td></tr>";
+    });
+  });
+  return "<h2>" + title + "</h2><table><thead><tr><th>Date</th><th>Current</th><th>New</th></tr></thead><tbody>" + rows + "</tbody></table>";
+}
+
+async function loadComparison(){
+  try{
+    const res = await fetch(APPS_SCRIPT_URL + '?key=invisel-console-state');
+    const data = await res.json();
+    if(!data || !data.value){ throw new Error('No state found on backend.'); }
+    cachedState = JSON.parse(data.value);
+
+    [...Object.keys(WEBSITE), ...Object.keys(AMAZON_REV)].forEach(mk=>ensureMonthLocal(cachedState, mk));
+
+    let html = '';
+    html += buildTable('Website Revenue', WEBSITE, (mk,d)=> (cachedState.months[mk].dailyLog[d]||{}).websiteRevenue||0 );
+    html += buildTable('Amazon Revenue', AMAZON_REV, (mk,d)=> (cachedState.months[mk].dailyLog[d]||{}).amazonRevenue||0 );
+    html += buildTable('Meta Spend', META, (mk,d)=> (cachedState.months[mk].dailyLog[d]||{}).metaSpend||0 );
+    html += buildTable('Google Spend (only where newly available)', GOOGLE, (mk,d)=> (cachedState.months[mk].dailyLog[d]||{}).googleSpend||0 );
+
+    let b2bRows = '';
+    Object.keys(AMAZON_B2B).forEach(function(mk){
+      const total = Object.values(AMAZON_B2B[mk]).reduce((s,v)=>s+v,0);
+      const cur = ensureMonthLocal(cachedState, mk).mtd.b2bRevenue||0;
+      b2bRows += "<tr><td>" + mk + " (sum of days shown)</td><td>" + inr(cur) + "</td><td class='diff'>" + inr(total) + "</td></tr>";
+    });
+    html += "<h2>Amazon B2B (sets MTD b2bRevenue per month)</h2><table><thead><tr><th>Month</th><th>Current MTD</th><th>New MTD</th></tr></thead><tbody>" + b2bRows + "</tbody></table>";
+
+    document.getElementById('tables').innerHTML = html;
+    document.getElementById('loadingMsg').style.display = 'none';
+    const btn = document.getElementById('importBtn');
+    btn.disabled = false;
+    btn.textContent = 'Apply All Data Above';
+  }catch(e){
+    document.getElementById('loadingMsg').textContent = 'Could not load comparison: ' + e.message;
+  }
+}
+loadComparison();
+
+async function runUpdate(){
+  const btn = document.getElementById('importBtn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.style.display = 'block';
+  status.className = 'status-progress';
+  status.textContent = 'Applying all data...';
+
+  try{
+    const state = cachedState;
+    const summary = [];
+    const touchedMonths = new Set([...Object.keys(WEBSITE), ...Object.keys(AMAZON_REV), ...Object.keys(META), ...Object.keys(GOOGLE), ...Object.keys(AMAZON_B2B)]);
+
+    touchedMonths.forEach(function(monthKey){
+      const m = ensureMonthLocal(state, monthKey);
+
+      function applyField(dataset, field){
+        if(!dataset[monthKey]) return;
+        Object.keys(dataset[monthKey]).forEach(function(day){
+          if(!m.dailyLog[day]) m.dailyLog[day] = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+          m.dailyLog[day][field] = dataset[monthKey][day];
+        });
+      }
+      applyField(WEBSITE, 'websiteRevenue');
+      applyField(AMAZON_REV, 'amazonRevenue');
+      applyField(META, 'metaSpend');
+      applyField(GOOGLE, 'googleSpend');
+
+      if(AMAZON_B2B[monthKey]){
+        m.mtd.b2bRevenue = Object.values(AMAZON_B2B[monthKey]).reduce((s,v)=>s+v,0);
+      }
+
+      let sums = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+      Object.values(m.dailyLog).forEach(function(e){
+        sums.metaSpend += e.metaSpend||0;
+        sums.googleSpend += e.googleSpend||0;
+        sums.amazonSpend += e.amazonSpend||0;
+        sums.websiteRevenue += e.websiteRevenue||0;
+        sums.amazonRevenue += e.amazonRevenue||0;
+      });
+      m.mtd.shopifyRevenue = sums.websiteRevenue;
+      m.mtd.marketplaceRevenue = sums.amazonRevenue;
+      m.mtd.metaGoogleSpend = sums.metaSpend + sums.googleSpend;
+      m.mtd.amazonAdsSpend = sums.amazonSpend;
+      summary.push(monthKey + ': Website ' + inr(m.mtd.shopifyRevenue) + ' | Amazon ' + inr(m.mtd.marketplaceRevenue) + ' | B2B ' + inr(m.mtd.b2bRevenue||0) + ' | Meta+Google ' + inr(m.mtd.metaGoogleSpend));
+    });
+
+    state.lastSavedAt = new Date().toISOString();
+    state.lastSavedBy = 'Full Catch-Up Import (Website+Amazon+B2B+Meta+Google)';
+
+    status.textContent = 'Writing to the backend...';
+    const writeRes = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'set', key:'invisel-console-state', value: JSON.stringify(state), token: WRITE_TOKEN, updatedBy: 'Full Catch-Up Import' })
+    });
+    const writeData = await writeRes.json();
+    if(!writeData.ok){ throw new Error('Write rejected: ' + JSON.stringify(writeData)); }
+
+    status.className = 'status-ok';
+    status.textContent = 'Success.\n\n' + summary.join('\n') + '\n\n'
+      + 'Amazon COGS/RTO entries and everything else not listed here were left untouched.\n\n'
+      + 'Reload the Growth console to see it.';
+  }catch(e){
+    status.className = 'status-err';
+    status.textContent = 'Update failed: ' + e.message + '\n\nSafe to retry.';
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
