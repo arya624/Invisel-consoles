@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Invisel — Grippi Catch-Up (Aug 24 - Sep 2)</title>
+<style>
+  body{font-family:'IBM Plex Mono',monospace;background:#0F1419;color:#E6EDEA;padding:30px;max-width:900px;margin:0 auto;}
+  h1{font-family:sans-serif;font-size:20px;color:#fff;}
+  p{font-family:sans-serif;font-size:13.5px;color:#B7C2C7;line-height:1.6;}
+  table{width:100%;border-collapse:collapse;font-size:11.5px;margin:16px 0;}
+  th,td{padding:5px 7px;border-bottom:1px solid #2A343A;text-align:right;}
+  th:first-child,td:first-child{text-align:left;}
+  th{color:#8A9AA3;font-weight:600;text-transform:uppercase;font-size:9.5px;}
+  .diff{color:#F0C868;font-weight:600;}
+  .same{color:#5A6A70;}
+  .na{color:#3A444A;font-style:italic;}
+  .btn{background:#0C8C82;color:#fff;border:none;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:sans-serif;}
+  .btn:hover{background:#075E57;}
+  .btn:disabled{background:#3A444A;cursor:not-allowed;}
+  #status{margin-top:16px;padding:14px 16px;border-radius:8px;font-family:sans-serif;font-size:13.5px;display:none;white-space:pre-wrap;line-height:1.6;}
+  .status-ok{background:#123324;border:1px solid #3ED598;color:#3ED598;}
+  .status-err{background:#3A1A1A;border:1px solid #FF6B6B;color:#FF6B6B;}
+  .status-progress{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;}
+  .warn{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13.5px;line-height:1.5;display:none;}
+  .note{background:#161D22;border:1px solid #2A343A;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13px;color:#B7C2C7;line-height:1.6;}
+</style>
+</head>
+<body>
+<h1>Grippi Catch-Up — Meta + Google Spend (Aug 24 - Sep 2)</h1>
+<p>Fills the gap since your last data entry and brings Meta spend through yesterday (Sep 2). Google Ads only has data through Aug 27 as of right now — that's Google's own reporting lag, not a fetch issue on this end.</p>
+
+<div class="note">
+  <b>Not touched:</b> Website revenue, Amazon spend/revenue, COGS, RTO entries. This only sets Meta spend (Aug 24 - Sep 2) and Google spend (Aug 24-27, the only days available).
+</div>
+
+<div class="warn" id="protocolWarning">You appear to have opened this file directly (file://). Upload it to your GitHub repo and open it from the hosted URL instead.</div>
+
+<p id="loadingMsg">Loading current live data for comparison...</p>
+<table id="compareTable" style="display:none;">
+  <thead><tr><th>Date</th><th>Meta — Current</th><th>Meta — Grippi</th><th>Google — Current</th><th>Google — Grippi</th></tr></thead>
+  <tbody id="compareRows"></tbody>
+</table>
+
+<button class="btn" id="importBtn" onclick="runUpdate()" disabled>Loading comparison first...</button>
+<div id="status"></div>
+
+<script>
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx7Iu7XJlvEQGQRfS8gBzleETxvCeqAHtVMRty0hIHy9IKtiLo9gxP9-sGN1Xw6Gymr/exec";
+const WRITE_TOKEN = "invisel-2026-9x7q2m";
+
+// {monthKey: {day: {metaSpend, googleSpend(optional)}}}
+const GRIPPI_DATA = {
+  "2026-08": {
+    "24": {metaSpend:169646.1, googleSpend:9581.05},
+    "25": {metaSpend:114310.26, googleSpend:6221.33},
+    "26": {metaSpend:128062.66, googleSpend:5538.95},
+    "27": {metaSpend:129182.56, googleSpend:12974.37},
+    "28": {metaSpend:111843.44},
+    "29": {metaSpend:132098.52},
+    "30": {metaSpend:172651.14},
+    "31": {metaSpend:140813.28}
+  },
+  "2026-09": {
+    "1": {metaSpend:139327.44},
+    "2": {metaSpend:144302.6}
+  }
+};
+
+if(window.location.protocol === 'file:') document.getElementById('protocolWarning').style.display = 'block';
+
+function inr(n){ return "Rs " + Math.round(n).toLocaleString('en-IN'); }
+function cell(current, correct){
+  if(correct===undefined) return "<td colspan='2' class='na'>not available yet</td>";
+  const differs = Math.abs(current - correct) > 0.5;
+  return "<td>" + inr(current) + "</td><td class='" + (differs?'diff':'same') + "'>" + inr(correct) + "</td>";
+}
+
+let cachedState = null;
+
+function ensureMonthLocal(state, monthKey){
+  if(!state.months) state.months = {};
+  if(!state.months[monthKey]){
+    state.months[monthKey] = {
+      targets: { total: 0, shopify: 0, marketplace: 0, metaGoogleAdSpendBudget: 0, amazonAdSpendBudget: 0 },
+      mtd: { shopifyRevenue: 0, marketplaceRevenue: 0, metaGoogleSpend: 0, amazonAdsSpend: 0, b2bRevenue: 0, b2cRevenue: 0, directIncome: 0 },
+      overheads: [], dailyLog: {}
+    };
+  }
+  if(!state.months[monthKey].dailyLog) state.months[monthKey].dailyLog = {};
+  return state.months[monthKey];
+}
+
+async function loadComparison(){
+  try{
+    const res = await fetch(APPS_SCRIPT_URL + '?key=invisel-console-state');
+    const data = await res.json();
+    if(!data || !data.value){ throw new Error('No state found on backend.'); }
+    cachedState = JSON.parse(data.value);
+
+    const tbody = document.getElementById('compareRows');
+    let anyDiff = false;
+    Object.keys(GRIPPI_DATA).sort().forEach(function(monthKey){
+      const m = ensureMonthLocal(cachedState, monthKey);
+      Object.keys(GRIPPI_DATA[monthKey]).map(Number).sort((a,b)=>a-b).forEach(function(day){
+        const key = String(day);
+        const existing = m.dailyLog[key] || {};
+        const g = GRIPPI_DATA[monthKey][key];
+        const curMeta = existing.metaSpend || 0;
+        const curGoogle = existing.googleSpend || 0;
+        if(Math.abs(curMeta-g.metaSpend)>0.5) anyDiff = true;
+        if(g.googleSpend!==undefined && Math.abs(curGoogle-g.googleSpend)>0.5) anyDiff = true;
+        const tr = document.createElement('tr');
+        tr.innerHTML = "<td>" + monthKey + "-" + key.padStart(2,'0') + "</td>" + cell(curMeta, g.metaSpend) + cell(curGoogle, g.googleSpend);
+        tbody.appendChild(tr);
+      });
+    });
+
+    document.getElementById('loadingMsg').style.display = 'none';
+    document.getElementById('compareTable').style.display = 'table';
+    const btn = document.getElementById('importBtn');
+    btn.disabled = false;
+    btn.textContent = anyDiff ? 'Apply Grippi Catch-Up Data' : 'Re-apply Anyway (no differences found)';
+  }catch(e){
+    document.getElementById('loadingMsg').textContent = 'Could not load comparison: ' + e.message;
+  }
+}
+loadComparison();
+
+async function runUpdate(){
+  const btn = document.getElementById('importBtn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.style.display = 'block';
+  status.className = 'status-progress';
+  status.textContent = 'Applying Grippi catch-up data...';
+
+  try{
+    const state = cachedState;
+    const summary = [];
+
+    Object.keys(GRIPPI_DATA).forEach(function(monthKey){
+      const m = ensureMonthLocal(state, monthKey);
+      Object.keys(GRIPPI_DATA[monthKey]).forEach(function(day){
+        if(!m.dailyLog[day]){
+          m.dailyLog[day] = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+        }
+        const g = GRIPPI_DATA[monthKey][day];
+        m.dailyLog[day].metaSpend = g.metaSpend;
+        if(g.googleSpend!==undefined) m.dailyLog[day].googleSpend = g.googleSpend;
+      });
+
+      let sums = { metaSpend:0, googleSpend:0, amazonSpend:0, websiteRevenue:0, amazonRevenue:0 };
+      Object.values(m.dailyLog).forEach(function(e){
+        sums.metaSpend += e.metaSpend||0;
+        sums.googleSpend += e.googleSpend||0;
+        sums.amazonSpend += e.amazonSpend||0;
+        sums.websiteRevenue += e.websiteRevenue||0;
+        sums.amazonRevenue += e.amazonRevenue||0;
+      });
+      m.mtd.shopifyRevenue = sums.websiteRevenue;
+      m.mtd.marketplaceRevenue = sums.amazonRevenue;
+      m.mtd.metaGoogleSpend = sums.metaSpend + sums.googleSpend;
+      m.mtd.amazonAdsSpend = sums.amazonSpend;
+      summary.push(monthKey + ': Meta+Google Spend now ' + inr(m.mtd.metaGoogleSpend));
+    });
+
+    state.lastSavedAt = new Date().toISOString();
+    state.lastSavedBy = 'Grippi Catch-Up Sync';
+
+    status.textContent = 'Writing to the backend...';
+    const writeRes = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'set', key:'invisel-console-state', value: JSON.stringify(state), token: WRITE_TOKEN, updatedBy: 'Grippi Catch-Up Sync' })
+    });
+    const writeData = await writeRes.json();
+    if(!writeData.ok){ throw new Error('Write rejected: ' + JSON.stringify(writeData)); }
+
+    status.className = 'status-ok';
+    status.textContent = 'Success.\n\n' + summary.join('\n') + '\n\n'
+      + 'Google spend for Aug 28 - Sep 2 was not available from Grippi yet — those days keep whatever Google spend they already had (likely 0) until that data reports in, at which point re-run this or ask for a fresh pull.\n\n'
+      + 'Reload the Growth console to see it.';
+  }catch(e){
+    status.className = 'status-err';
+    status.textContent = 'Update failed: ' + e.message + '\n\nSafe to retry.';
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>

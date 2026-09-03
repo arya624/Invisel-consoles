@@ -1469,6 +1469,40 @@ function computeIncomeStatementLine(rev, marketingSpend, overheads, a, realFigur
    Amazon revenue is already "locked in" by logged days, so the caller
    can apply the assumption-based % only to the *remaining* (not yet
    logged) portion when projecting the rest of the month. */
+/* Single shared formula for both Daily and MTD profitability views:
+   Gross Revenue - RTO - Tax - COGS - Shipping - PGF = CM1 (gross profit)
+   CM1 - Marketing & Ad Spend = CM2
+   CM2 - Expenses & Overheads = CM3
+   Reuses assumptions already in place elsewhere (RTO provision %, BYOB
+   Tax %/PGF %, channel COGS %, channel shipping %) so there's one
+   consistent set of rates driving every profitability view in the
+   console, not several slightly different ones. */
+function computeProfitabilityWaterfall(rev, marketingSpend, overheadsTotal, a){
+  const grossRevenue = rev.shopifyRevenue + rev.amazonRevenue;
+
+  const rtoShopify = rev.rtoShopify!==undefined ? rev.rtoShopify : rev.shopifyRevenue*(a.rtoProvisionPctShopify||0);
+  const rtoAmazon = rev.rtoAmazon!==undefined ? rev.rtoAmazon : rev.amazonRevenue*(a.rtoProvisionPctAmazon||0);
+  const rtoTotal = rtoShopify + rtoAmazon;
+
+  const taxTotal = grossRevenue * (a.byobTaxPct||0);
+
+  const cogsShopify = rev.shopifyCogs!==undefined ? rev.shopifyCogs : rev.shopifyRevenue*a.cogsD2C;
+  const cogsAmazon = rev.amazonCogs!==undefined ? rev.amazonCogs : rev.amazonRevenue*a.marketplaceCogsPct;
+  const cogsTotal = cogsShopify + cogsAmazon;
+
+  const shippingTotal = rev.shopifyRevenue*(a.d2cShippingPct||0) + rev.amazonRevenue*(a.marketplaceShippingPct||0);
+  const pgfTotal = grossRevenue * (a.byobPgfPct||0);
+
+  const cm1 = grossRevenue - rtoTotal - taxTotal - cogsTotal - shippingTotal - pgfTotal;
+  const cm2 = cm1 - marketingSpend;
+  const cm3 = cm2 - overheadsTotal;
+
+  return {
+    grossRevenue, rtoTotal, taxTotal, cogsTotal, cogsShopify, cogsAmazon, shippingTotal, pgfTotal,
+    cm1, marketingSpend, cm2, overheadsTotal, cm3,
+    cm1pct: grossRevenue? cm1/grossRevenue:0, cm2pct: grossRevenue? cm2/grossRevenue:0, cm3pct: grossRevenue? cm3/grossRevenue:0
+  };
+}
 function computeMonthCogsRto(monthKey){
   const m = state.months[monthKey];
   const a = state.assumptions;
@@ -1577,14 +1611,126 @@ function renderIncome(){
       <div class="card"><label class="field">Direct Income — COD charges etc. (₹, MTD)</label><input type="number" value="${m.mtd.directIncome}" data-fid="mtd-directIncome" oninput="updateMtd('directIncome', this.value)"/><div class="hint">Trailing avg: ${inr(REAL_PL_TRAILING_AVG.directIncome)}/mo</div></div>
     </div>
 
-    <div class="section-title">RTO Provision <span class="n">estimated same-day, since real returns take 7-15 days to land</span></div>
-    <div class="assumption-note">Defaults to 0% — no trailing average is assumed, since there's no return data behind it yet. Set a real % once you have one (from Porter/courier data, marketplace return reports, or your own estimate). Shown as its own line in the Income Statement below, not folded into COGS or overheads.</div>
-    <div class="grid grid-2">
-      <div class="card"><label class="field">Shopify RTO Provision %</label><input type="number" step="0.1" value="${(a.rtoProvisionPctShopify*100).toFixed(2)}" data-fid="assum-rtoProvisionPctShopify" oninput="updateAssumption('rtoProvisionPctShopify', this.value, true)"/><div class="hint">Applied to Shopify revenue only</div></div>
-      <div class="card"><label class="field">Amazon RTO Provision %</label><input type="number" step="0.1" value="${(a.rtoProvisionPctAmazon*100).toFixed(2)}" data-fid="assum-rtoProvisionPctAmazon" oninput="updateAssumption('rtoProvisionPctAmazon', this.value, true)"/><div class="hint">Applied to Amazon revenue only</div></div>
+    <div class="section-title">RTO Provision, Tax &amp; PGF <span class="n">rates used by both Daily and MTD Profitability below</span></div>
+    <div class="assumption-note">RTO defaults to 0% (no trailing average assumed, since there's no return data behind it). Tax and PGF default to your real BYOB sheet rates (18% GST, 0.9% payment gateway). All four apply automatically in the profitability views below — change them here, not there.</div>
+    <div class="grid grid-4">
+      <div class="card"><label class="field">Shopify RTO Provision %</label><input type="number" step="0.1" value="${(a.rtoProvisionPctShopify*100).toFixed(2)}" data-fid="assum-rtoProvisionPctShopify" oninput="updateAssumption('rtoProvisionPctShopify', this.value, true)"/></div>
+      <div class="card"><label class="field">Amazon RTO Provision %</label><input type="number" step="0.1" value="${(a.rtoProvisionPctAmazon*100).toFixed(2)}" data-fid="assum-rtoProvisionPctAmazon" oninput="updateAssumption('rtoProvisionPctAmazon', this.value, true)"/></div>
+      <div class="card"><label class="field">Tax % (GST)</label><input type="number" step="0.1" value="${(a.byobTaxPct*100).toFixed(2)}" data-fid="assum-byobTaxPct-income" oninput="updateAssumption('byobTaxPct', this.value, true)"/></div>
+      <div class="card"><label class="field">PGF % (Payment Gateway)</label><input type="number" step="0.01" value="${(a.byobPgfPct*100).toFixed(2)}" data-fid="assum-byobPgfPct-income" oninput="updateAssumption('byobPgfPct', this.value, true)"/></div>
     </div>
 
-    <div class="section-title">${monthLabel(activeKey)} Income Statement</div>
+    ${(function(){
+      const totalDays = P.dayInfo.totalDays;
+      const daysElapsed = P.dayInfo.daysElapsed;
+      const overheadsMonthlyTotal = (m.overheads||[]).filter(o=>o.category!=='Indirect Income').reduce((s,o)=>s+(o.amount||0),0);
+      const dailyOverheads = overheadsMonthlyTotal/totalDays;
+      const mtdOverheads = dailyOverheads*daysElapsed;
+
+      const mtdW = computeProfitabilityWaterfall(
+        { shopifyRevenue: m.mtd.shopifyRevenue, amazonRevenue: m.mtd.marketplaceRevenue,
+          shopifyCogs: monthCogsRto.cogsShopify, amazonCogs: monthCogsRto.cogsMarketplace,
+          rtoShopify: monthCogsRto.rtoShopify, rtoAmazon: monthCogsRto.rtoAmazon },
+        P.mtdSpend, mtdOverheads, a
+      );
+
+      const loggedDays = Object.keys(m.dailyLog).map(Number).sort((x,y)=>x-y);
+      if(dailySnapshotDay===null || !m.dailyLog[dailySnapshotDay]) dailySnapshotDay = loggedDays.length ? loggedDays[loggedDays.length-1] : null;
+      let dailyW = null, dayEntryForW = null;
+      if(dailySnapshotDay!==null){
+        dayEntryForW = m.dailyLog[dailySnapshotDay];
+        dailyW = computeProfitabilityWaterfall(
+          { shopifyRevenue: dayEntryForW.websiteRevenue||0, amazonRevenue: dayEntryForW.amazonRevenue||0,
+            shopifyCogs: dayEntryForW.shopifyCogs, amazonCogs: dayEntryForW.amazonCogs,
+            rtoShopify: dayEntryForW.rtoActualShopify, rtoAmazon: dayEntryForW.rtoActualAmazon },
+          (dayEntryForW.metaSpend||0)+(dayEntryForW.googleSpend||0)+(dayEntryForW.amazonSpend||0),
+          dailyOverheads, a
+        );
+      }
+
+      function waterfallBars(w, idPrefix){
+        const steps = [
+          {label:'Gross Revenue', value:w.grossRevenue, color:'#0C8C82'},
+          {label:'CM1', value:w.cm1, color: w.cm1<0?'#FF6B6B':'#3ED598'},
+          {label:'CM2', value:w.cm2, color: w.cm2<0?'#FF6B6B':'#E0B04A'},
+          {label:'CM3', value:w.cm3, color: w.cm3<0?'#FF6B6B':'#3ED598'}
+        ];
+        const maxAbs = Math.max(...steps.map(s=>Math.abs(s.value)), 1);
+        return steps.map(s=>{
+          const widthPct = Math.min(Math.abs(s.value)/maxAbs*100, 100).toFixed(1);
+          return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <div style="width:90px;font-size:11px;color:var(--ink-soft);">${s.label}</div>
+            <div style="flex:1;background:var(--border);border-radius:4px;height:16px;position:relative;">
+              <div style="background:${s.color};height:100%;width:${widthPct}%;border-radius:4px;"></div>
+            </div>
+            <div style="width:100px;text-align:right;font-size:11.5px;font-weight:600;color:${s.value<0?'var(--danger)':'var(--ink)'};">${inr(s.value)}</div>
+          </div>`;
+        }).join('');
+      }
+
+      function waterfallTable(w){
+        function r(l, v, opts){
+          opts=opts||{};
+          return `<tr><td style="${opts.bold?'font-weight:600;':''}">${l}</td><td class="num" style="${opts.bold?'font-weight:600;':''}${v<0?'color:var(--danger);':''}">${inr(v)}</td>${opts.pct!==undefined?`<td class="num">${pct(opts.pct)}</td>`:'<td></td>'}</tr>`;
+        }
+        return `<div class="tablewrap"><table>
+          <thead><tr><th>Line</th><th class="num">Amount</th><th class="num">% of Revenue</th></tr></thead>
+          <tbody>
+            ${r('Gross Revenue', w.grossRevenue, {bold:true})}
+            ${r('− RTO', -w.rtoTotal)}
+            ${r('− Tax', -w.taxTotal)}
+            ${r('− COGS', -w.cogsTotal)}
+            ${r('− Shipping', -w.shippingTotal)}
+            ${r('− PGF', -w.pgfTotal)}
+            ${r('CM1 (Gross Profit)', w.cm1, {bold:true, pct:w.cm1pct})}
+            ${r('− Marketing & Ad Spend', -w.marketingSpend)}
+            ${r('CM2', w.cm2, {bold:true, pct:w.cm2pct})}
+            ${r('− Expenses & Overheads', -w.overheadsTotal)}
+            ${r('CM3', w.cm3, {bold:true, pct:w.cm3pct})}
+          </tbody>
+        </table></div>`;
+      }
+
+      const mtdTargetPct = m.targets.total ? mtdW.grossRevenue/m.targets.total : 0;
+
+      return `
+      <div style="background:var(--surface);border:1.5px solid var(--accent);border-radius:12px;padding:18px;margin:20px 0;">
+        <div class="section-title" style="margin-top:0;">MTD Profitability <span class="n">${monthLabel(activeKey)}, through day ${daysElapsed} of ${totalDays}</span></div>
+        <div class="assumption-note" style="margin-bottom:12px;">Revenue − RTO − Tax − COGS − Shipping − PGF = CM1. CM1 − Marketing = CM2. CM2 − Expenses &amp; Overheads (accrued through today) = CM3.</div>
+        <div class="grid grid-3" style="margin-bottom:14px;">
+          <div class="card kpi"><div class="label">MTD Revenue vs Target</div><div class="value">${inr(mtdW.grossRevenue)}</div><div class="sub">${pct(mtdTargetPct)} of ${inrLakh(m.targets.total)}</div></div>
+          <div class="card kpi"><div class="label">MTD CM3</div><div class="value" style="color:${mtdW.cm3<0?'var(--danger)':'var(--good)'}">${inr(mtdW.cm3)}</div><div class="sub">${pct(mtdW.cm3pct)} of MTD revenue</div></div>
+          <div class="card kpi"><div class="label">Expenses &amp; Overheads (MTD)</div><div class="value">${inr(mtdOverheads)}</div><div class="sub">accrued through day ${daysElapsed}</div></div>
+        </div>
+        <div class="grid grid-2">
+          <div>${waterfallTable(mtdW)}</div>
+          <div class="card">${waterfallBars(mtdW,'mtd')}</div>
+        </div>
+      </div>
+
+      <div style="background:var(--surface);border:1.5px solid var(--warn);border-radius:12px;padding:18px;margin:20px 0;">
+        <div class="section-title" style="margin-top:0;">Daily Profitability <span class="n">one day at a time — separate from MTD above</span></div>
+        <div class="assumption-note" style="margin-bottom:12px;">Same formula as MTD, applied to a single day. Overheads shown are the monthly total ÷ ${totalDays} days.</div>
+        ${loggedDays.length===0 ? '<div class="hint">No days logged yet this month.</div>' : `
+        <label class="field">Which day?</label>
+        <select onchange="dailySnapshotDay=parseInt(this.value); renderIncome();" style="width:auto;min-width:180px;margin-bottom:12px;">${loggedDays.map(d=>`<option value="${d}" ${d===dailySnapshotDay?'selected':''}>${monthLabel(activeKey).split(' ')[0]} ${d}</option>`).join('')}</select>
+        <div class="grid grid-3" style="margin-bottom:14px;">
+          <div class="card kpi"><div class="label">Daily Revenue vs Daily Target</div><div class="value">${inr(dailyW.grossRevenue)}</div><div class="sub">${m.targets.total? pct(dailyW.grossRevenue/(m.targets.total/totalDays)):'—'} of ${inr(m.targets.total/totalDays)}/day target</div></div>
+          <div class="card kpi"><div class="label">Daily CM3</div><div class="value" style="color:${dailyW.cm3<0?'var(--danger)':'var(--good)'}">${inr(dailyW.cm3)}</div><div class="sub">${pct(dailyW.cm3pct)} of that day's revenue</div></div>
+          <div class="card kpi"><div class="label">Expenses &amp; Overheads (Daily)</div><div class="value">${inr(dailyOverheads)}</div><div class="sub">monthly total ÷ ${totalDays}</div></div>
+        </div>
+        <div class="grid grid-2">
+          <div>${waterfallTable(dailyW)}</div>
+          <div class="card">${waterfallBars(dailyW,'daily')}</div>
+        </div>
+        `}
+      </div>
+      `;
+    })()}
+
+    </div>
+
+    <div class="section-title">${monthLabel(activeKey)} — Full Company P&amp;L <span class="n">broader view: includes B2B/B2C/Direct Income and Net Profit, not just CM1-CM3 above</span></div>
     <div class="assumption-note">Marketing &amp; Branding Expenses below is <b>not</b> separately typed — it's your MTD actual ad spend (Meta+Google+Amazon Ads from Overview) projected to a full month at the same daily pace as revenue. Change ad spend in Overview, not here.</div>
     <div class="tablewrap"><table>
       <thead><tr><th>Line</th><th class="num">MTD Actual</th><th class="num">${label}</th></tr></thead>
@@ -1621,7 +1767,6 @@ function renderIncome(){
     ${(function(){
       const totalDays = P.dayInfo.totalDays;
       const daysElapsed = P.dayInfo.daysElapsed;
-      const tillDateDays = Math.max(daysElapsed-1, 0);
       const categories = {};
       (m.overheads||[]).forEach(o=>{
         if(!categories[o.category]) categories[o.category] = 0;
@@ -1630,14 +1775,24 @@ function renderIncome(){
       const catNames = Object.keys(categories).sort();
       if(catNames.length===0) return '';
       const grandTotal = catNames.reduce((s,c)=>s+categories[c],0);
+      const grandMtd = grandTotal/totalDays*daysElapsed;
+      const grandDaily = grandTotal/totalDays;
       return `
-        <div class="section-title" style="margin-top:16px;">Expenses &amp; Overheads Summary <span class="n">${monthLabel(activeKey)} — by category, Total / Till-date / Per Day</span></div>
+        <div class="section-title" style="margin-top:16px;">Expenses &amp; Overheads <span class="n">${monthLabel(activeKey)} — total first, breakdown below</span></div>
+
+        <div class="grid grid-3" style="margin-bottom:14px;">
+          <div class="card kpi" style="border-color:var(--accent);"><div class="label">Total (Full Month)</div><div class="value">${inr(grandTotal)}</div><div class="sub">every category combined</div></div>
+          <div class="card kpi"><div class="label">MTD (accrued through day ${daysElapsed})</div><div class="value">${inr(grandMtd)}</div><div class="sub">Total ÷ ${totalDays} days × ${daysElapsed} elapsed</div></div>
+          <div class="card kpi"><div class="label">Daily</div><div class="value">${inr(grandDaily)}</div><div class="sub">Total ÷ ${totalDays} days in ${monthLabel(activeKey)}</div></div>
+        </div>
+
+        <div class="hint" style="margin-bottom:6px;">Bifurcation by category:</div>
         <div class="tablewrap"><table>
           <thead><tr><th></th>${catNames.map(c=>`<th class="num">${c}</th>`).join('')}<th class="num"><b>Total</b></th></tr></thead>
           <tbody>
             <tr><td><b>Total</b></td>${catNames.map(c=>`<td class="num">${inr(categories[c])}</td>`).join('')}<td class="num"><b>${inr(grandTotal)}</b></td></tr>
-            <tr><td>Till date (d-1)</td>${catNames.map(c=>`<td class="num">${inr(categories[c]/totalDays*tillDateDays)}</td>`).join('')}<td class="num">${inr(grandTotal/totalDays*tillDateDays)}</td></tr>
-            <tr><td>Per Day</td>${catNames.map(c=>`<td class="num">${inr(categories[c]/totalDays)}</td>`).join('')}<td class="num">${inr(grandTotal/totalDays)}</td></tr>
+            <tr><td>MTD</td>${catNames.map(c=>`<td class="num">${inr(categories[c]/totalDays*daysElapsed)}</td>`).join('')}<td class="num">${inr(grandMtd)}</td></tr>
+            <tr><td>Daily</td>${catNames.map(c=>`<td class="num">${inr(categories[c]/totalDays)}</td>`).join('')}<td class="num">${inr(grandDaily)}</td></tr>
           </tbody>
         </table></div>
       `;
