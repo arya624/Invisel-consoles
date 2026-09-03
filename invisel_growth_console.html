@@ -167,7 +167,10 @@ const DEFAULT_STATE = {
     blendedRoasTarget: 2.45,
     incrementalRoasTarget: 2.55,
     rtoProvisionPctShopify: 0,
-    rtoProvisionPctAmazon: 0
+    rtoProvisionPctAmazon: 0,
+    byobTaxPct: 0.18,
+    byobPgfPct: 0.009,
+    byobCac: 700
   },
   discountFloorPct: 0.30,
   bundleFloorPct: 0.30,
@@ -236,6 +239,9 @@ const CATALOG = [
   { id:"kit-ultimate-all", name:"Ultimate Invisel Combo (5 protectors + 3 cleaners)", category:"Kit", price:6499, cogs:1092.80 },
   { id:"kit-ultimate-cleaners", name:"Ultimate Cleaners Combo (6 cleaners)", category:"Kit", price:2499, cogs:225.26, cogsEstimated:true }
 ];
+// Shipping isn't part of the base catalog data — default to the real
+// flat rate from Arya's own BYOB CM2 sheet (₹120), editable per SKU.
+CATALOG.forEach(c=>{ if(c.shipping===undefined) c.shipping = 120; });
 
 const OFFICIAL_BUNDLE_DISCOUNTS = [
   { id:"kit-bathroom", name:"Bathroom Protector Kit", claimed:"Save 24% vs buying separately" },
@@ -495,7 +501,7 @@ async function loadState(){
       const savedCatalog = JSON.parse(cat.value);
       savedCatalog.forEach(row=>{
         const target = CATALOG.find(c=>c.id===row.id);
-        if(target){ target.price = row.price; target.cogs = row.cogs; }
+        if(target){ target.price = row.price; target.cogs = row.cogs; if(row.shipping!==undefined) target.shipping = row.shipping; }
       });
     }
   }catch(e){}
@@ -565,7 +571,7 @@ function queueSave(){
       state.lastSavedAt = new Date().toISOString();
       state.lastSavedBy = 'Finance Console';
       await syncSet('invisel-console-state', JSON.stringify(state));
-      await syncSet('invisel-console-catalog', JSON.stringify(CATALOG.map(c=>({id:c.id,price:c.price,cogs:c.cogs}))));
+      await syncSet('invisel-console-catalog', JSON.stringify(CATALOG.map(c=>({id:c.id,price:c.price,cogs:c.cogs,shipping:c.shipping}))));
       await publishMarketingCatalog();
       document.getElementById('saveStatus').textContent = 'synced to team';
       renderLastUpdated();
@@ -655,7 +661,7 @@ function computeDailyCM3(day, monthKey){
   // not prorated.
   const directExpensesDaily = sumCat(['Direct Expense'])/totalDays;
   const techDaily = sumCat(['Technology & Platform'])/totalDays;
-  const otherIndirectDaily = sumCat(['Operating','Administrative & General','Other Indirect'])/totalDays;
+  const otherIndirectDaily = sumCat(['Operating','Administrative & General','Other Indirect','Rent','Salaries','Tools/Software','Agency Fees','Other Variable'])/totalDays;
   const indirectIncomeDaily = sumCat(['Indirect Income'])/totalDays;
   const rtoShopify = (e.rtoActualShopify!==undefined && e.rtoActualShopify!==null) ? e.rtoActualShopify : e.websiteRevenue * (a.rtoProvisionPctShopify||0);
   const rtoAmazon = (e.rtoActualAmazon!==undefined && e.rtoActualAmazon!==null) ? e.rtoActualAmazon : e.amazonRevenue * (a.rtoProvisionPctAmazon||0);
@@ -665,6 +671,64 @@ function computeDailyCM3(day, monthKey){
   const cm3 = cm2 - techDaily - rtoTotal;
   const netProfit = cm3 - otherIndirectDaily + indirectIncomeDaily;
   return { totalRevenue, totalCogs, directExpensesDaily, cm1, marketingSpend, cm2, techDaily, rtoTotal, cm3, otherIndirectDaily, indirectIncomeDaily, netProfit };
+}
+/* Matches Arya's real daily profitability sheet exactly, verified against
+   her 27-07-2026 numbers line for line: Gross Revenue -> RTO -> Net
+   Revenue -> COGS -> CM1 -> Marketing -> CM2 -> Expenses & Overheads ->
+   CM3. This nets RTO against revenue BEFORE COGS, which is a different
+   sequence from computeDailyCM3 above (which deducts RTO as a cost near
+   the end) — both are defensible, this one is kept separate specifically
+   to mirror her sheet's own structure, not to replace the other. */
+function computeDailySnapshot(day, monthKey){
+  const m = state.months[monthKey];
+  if(!m || !m.dailyLog[day]) return null;
+  const e = m.dailyLog[day];
+  const a = state.assumptions;
+  const totalDays = daysInMonthOf(monthKey);
+
+  let mtdGrossThroughDay = 0;
+  Object.keys(m.dailyLog).forEach(dStr=>{
+    if(parseInt(dStr) <= day){
+      const ee = m.dailyLog[dStr];
+      mtdGrossThroughDay += (ee.websiteRevenue||0) + (ee.amazonRevenue||0);
+    }
+  });
+
+  const shopifyRevenue = e.websiteRevenue||0;
+  const amazonRevenue = e.amazonRevenue||0;
+  const grossRevenue = shopifyRevenue + amazonRevenue;
+
+  const rtoShopify = (e.rtoActualShopify!==undefined && e.rtoActualShopify!==null) ? e.rtoActualShopify : shopifyRevenue*(a.rtoProvisionPctShopify||0);
+  const rtoAmazon = (e.rtoActualAmazon!==undefined && e.rtoActualAmazon!==null) ? e.rtoActualAmazon : amazonRevenue*(a.rtoProvisionPctAmazon||0);
+  const rtoTotal = rtoShopify + rtoAmazon;
+  const netRevenue = grossRevenue - rtoTotal;
+
+  const cogsShopify = (e.shopifyCogs!==undefined && e.shopifyCogs!==null) ? e.shopifyCogs : shopifyRevenue*a.cogsD2C;
+  const cogsAmazon = (e.amazonCogs!==undefined && e.amazonCogs!==null) ? e.amazonCogs : amazonRevenue*a.marketplaceCogsPct;
+  const cogsTotal = cogsShopify + cogsAmazon;
+  const shopifyCogsPct = shopifyRevenue ? cogsShopify/shopifyRevenue : 0;
+  const amazonCogsPct = amazonRevenue ? cogsAmazon/amazonRevenue : 0;
+
+  const cm1 = netRevenue - cogsTotal;
+  const marketingAdExp = (e.metaSpend||0)+(e.googleSpend||0)+(e.amazonSpend||0);
+  const cm2 = cm1 - marketingAdExp;
+
+  const sumCat = (cats)=> (m.overheads||[]).filter(o=>cats.includes(o.category)).reduce((s,o)=>s+o.amount,0);
+  const expensesOverheads = sumCat(['Direct Expense','Technology & Platform','Operating','Administrative & General','Other Indirect','Rent','Salaries','Tools/Software','Agency Fees','Other Variable'])/totalDays;
+  const cm3 = cm2 - expensesOverheads;
+
+  const pctOfMtd = v => mtdGrossThroughDay ? v/mtdGrossThroughDay : 0;
+
+  return {
+    grossRevenue, shopifyRevenue, amazonRevenue, rtoTotal, netRevenue,
+    cogsTotal, cogsShopify, cogsAmazon, shopifyCogsPct, amazonCogsPct,
+    cm1, marketingAdExp, cm2, expensesOverheads, cm3,
+    pct: {
+      grossRevenue: pctOfMtd(grossRevenue), shopifyRevenue: pctOfMtd(shopifyRevenue), amazonRevenue: pctOfMtd(amazonRevenue),
+      netRevenue: pctOfMtd(netRevenue), cogsTotal: pctOfMtd(cogsTotal), cm1: pctOfMtd(cm1),
+      marketingAdExp: pctOfMtd(marketingAdExp), cm2: pctOfMtd(cm2), expensesOverheads: pctOfMtd(expensesOverheads), cm3: pctOfMtd(cm3)
+    }
+  };
 }
 function getMonthDayInfo(monthKey, asOfDateStr){
   const totalDays = daysInMonthOf(monthKey);
@@ -748,6 +812,7 @@ function defaultEntryDay(){
   return 1;
 }
 let dailyEntryDay = null; // lazily initialized on first render
+let dailySnapshotDay = null; // lazily initialized to the most recent logged day
 function ensureDailyEntryDay(){
   if(dailyEntryDay===null) dailyEntryDay = defaultEntryDay();
   return dailyEntryDay;
@@ -1378,7 +1443,7 @@ function computeIncomeStatementLine(rev, marketingSpend, overheads, a, realFigur
   const sumCat = (cats)=> overheads.filter(o=>cats.includes(o.category)).reduce((s,o)=>s+o.amount,0);
   const directExpenses = sumCat(['Direct Expense']);
   const tech = sumCat(['Technology & Platform']);
-  const otherIndirect = sumCat(['Operating','Administrative & General','Other Indirect']);
+  const otherIndirect = sumCat(['Operating','Administrative & General','Other Indirect','Rent','Salaries','Tools/Software','Agency Fees','Other Variable']);
   const indirectIncome = sumCat(['Indirect Income']);
 
   // RTO — per channel, either a real confirmed amount (once returns for
@@ -1487,7 +1552,7 @@ function renderIncome(){
     <td><input type="text" value="${o.name}" data-fid="oh-name-${i}" oninput="updateOverheadRow(${i},'name',this.value)" style="width:100%"/></td>
     <td>
       <select data-fid="oh-cat-${i}" onchange="updateOverheadRow(${i},'category',this.value)">
-        ${['Direct Expense','Technology & Platform','Operating','Administrative & General','Other Indirect','Indirect Income'].map(c=>`<option value="${c}" ${o.category===c?'selected':''}>${c}</option>`).join('')}
+        ${['Direct Expense','Technology & Platform','Rent','Salaries','Tools/Software','Agency Fees','Other Variable','Operating','Administrative & General','Other Indirect','Indirect Income'].map(c=>`<option value="${c}" ${o.category===c?'selected':''}>${c}</option>`).join('')}
       </select>
     </td>
     <td class="num"><input type="number" value="${o.amount}" data-fid="oh-amt-${i}" oninput="updateOverheadRow(${i},'amount',this.value)" style="width:110px"/></td>
@@ -1552,6 +1617,31 @@ function renderIncome(){
       <tbody>${overheadRows}</tbody>
     </table></div>
     <button class="btn ghost small" style="margin-top:8px;" onclick="addOverheadRow()">+ Add expense line</button>
+
+    ${(function(){
+      const totalDays = P.dayInfo.totalDays;
+      const daysElapsed = P.dayInfo.daysElapsed;
+      const tillDateDays = Math.max(daysElapsed-1, 0);
+      const categories = {};
+      (m.overheads||[]).forEach(o=>{
+        if(!categories[o.category]) categories[o.category] = 0;
+        categories[o.category] += o.amount||0;
+      });
+      const catNames = Object.keys(categories).sort();
+      if(catNames.length===0) return '';
+      const grandTotal = catNames.reduce((s,c)=>s+categories[c],0);
+      return `
+        <div class="section-title" style="margin-top:16px;">Expenses &amp; Overheads Summary <span class="n">${monthLabel(activeKey)} — by category, Total / Till-date / Per Day</span></div>
+        <div class="tablewrap"><table>
+          <thead><tr><th></th>${catNames.map(c=>`<th class="num">${c}</th>`).join('')}<th class="num"><b>Total</b></th></tr></thead>
+          <tbody>
+            <tr><td><b>Total</b></td>${catNames.map(c=>`<td class="num">${inr(categories[c])}</td>`).join('')}<td class="num"><b>${inr(grandTotal)}</b></td></tr>
+            <tr><td>Till date (d-1)</td>${catNames.map(c=>`<td class="num">${inr(categories[c]/totalDays*tillDateDays)}</td>`).join('')}<td class="num">${inr(grandTotal/totalDays*tillDateDays)}</td></tr>
+            <tr><td>Per Day</td>${catNames.map(c=>`<td class="num">${inr(categories[c]/totalDays)}</td>`).join('')}<td class="num">${inr(grandTotal/totalDays)}</td></tr>
+          </tbody>
+        </table></div>
+      `;
+    })()}
 
     ${(function(){
       const prevKey = prevMonthKey(activeKey);
@@ -1641,6 +1731,46 @@ function renderIncome(){
           }).join('')}</tbody>
         </table></div>
         `}
+
+        ${(function(){
+          if(loggedDays.length===0) return '';
+          if(dailySnapshotDay===null || !m.dailyLog[dailySnapshotDay]) dailySnapshotDay = loggedDays[loggedDays.length-1];
+          const snap = computeDailySnapshot(dailySnapshotDay, activeKey);
+          const dayOpts = loggedDays.map(d=>`<option value="${d}" ${d===dailySnapshotDay?'selected':''}>${monthLabel(activeKey).split(' ')[0]} ${d}</option>`).join('');
+          function srow(label, amount, pctVal, opts){
+            opts = opts||{};
+            const bold = opts.bold ? 'font-weight:600;' : '';
+            const color = amount<0 ? 'color:var(--danger);' : '';
+            return `<tr>
+              <td style="${bold}">${label}</td>
+              <td class="num" style="${bold}${color}">${inr(amount)}</td>
+              <td class="num" style="${bold}${opts.redPct?'color:var(--danger);':''}">${pctVal===null?'—':pct(pctVal)}</td>
+            </tr>`;
+          }
+          return `
+          <div class="section-title" style="margin-top:16px;">Daily Profitability Snapshot <span class="n">matches your daily sheet exactly — one day at a time</span></div>
+          <div class="assumption-note">Percentage = that day's amount ÷ month-to-date Gross Revenue through this day — except Shopify COGS % and Amazon COGS % below, which are that channel's own COGS ÷ that channel's own revenue for the day (a cost ratio, not a pace figure).</div>
+          <label class="field">Which day?</label>
+          <select onchange="dailySnapshotDay=parseInt(this.value); renderIncome();" style="width:auto;min-width:180px;margin-bottom:10px;">${dayOpts}</select>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Daily</th><th class="num">Amount</th><th class="num">Percentage</th></tr></thead>
+            <tbody>
+              ${srow('Gross Revenue', snap.grossRevenue, snap.pct.grossRevenue, {bold:true})}
+              ${srow('Shopify Revenue', snap.shopifyRevenue, snap.pct.shopifyRevenue)}
+              ${srow('Amazon Revenue', snap.amazonRevenue, snap.pct.amazonRevenue)}
+              ${srow('Net Revenue', snap.netRevenue, snap.pct.netRevenue, {bold:true})}
+              ${srow('COGS Total', snap.cogsTotal, snap.pct.cogsTotal)}
+              ${srow('Shopify COGS', snap.cogsShopify, snap.shopifyCogsPct, {redPct:true})}
+              ${srow('Amazon COGS', snap.cogsAmazon, snap.amazonCogsPct, {redPct:true})}
+              ${srow('Gross Revenue (CM1)', snap.cm1, snap.pct.cm1, {bold:true})}
+              ${srow('Marketing & Ad Exp', -snap.marketingAdExp, snap.pct.marketingAdExp)}
+              ${srow('CM2', snap.cm2, snap.pct.cm2, {bold:true})}
+              ${srow('Expenses & Overheads', -snap.expensesOverheads, snap.pct.expensesOverheads)}
+              ${srow('CM3', snap.cm3, snap.pct.cm3, {bold:true})}
+            </tbody>
+          </table></div>
+          `;
+        })()}
       `;
     })()}
 
@@ -1664,7 +1794,7 @@ function renderIncome(){
         <td><input type="text" value="${o.name}" oninput="updateNextMonthOverheadRow(${i},'name',this.value)" style="width:100%"/></td>
         <td>
           <select onchange="updateNextMonthOverheadRow(${i},'category',this.value)">
-            ${['Direct Expense','Technology & Platform','Operating','Administrative & General','Other Indirect','Indirect Income'].map(c=>`<option value="${c}" ${o.category===c?'selected':''}>${c}</option>`).join('')}
+            ${['Direct Expense','Technology & Platform','Rent','Salaries','Tools/Software','Agency Fees','Other Variable','Operating','Administrative & General','Other Indirect','Indirect Income'].map(c=>`<option value="${c}" ${o.category===c?'selected':''}>${c}</option>`).join('')}
           </select>
         </td>
         <td class="num"><input type="number" value="${o.amount}" oninput="updateNextMonthOverheadRow(${i},'amount',this.value)" style="width:110px"/></td>
@@ -1814,6 +1944,67 @@ function renderCatalog(){
       <tbody>${rows}</tbody>
     </table>
     </div>
+
+    ${(function(){
+      const a = state.assumptions;
+      const byobRows = CATALOG.map(c=>{
+        const tax = c.price * a.byobTaxPct;
+        const pgf = c.price * a.byobPgfPct;
+        const cm1 = c.price - tax - c.cogs - c.shipping - pgf;
+        const cm1pct = c.price ? cm1/c.price : 0;
+        const cm2 = cm1 - a.byobCac;
+        const cm2pct = c.price ? cm2/c.price : 0;
+        return { id:c.id, name:c.name, price:c.price, tax, cogs:c.cogs, shipping:c.shipping, pgf, cm1, cm1pct, cm2, cm2pct };
+      });
+      const tableRows = byobRows.map(r=>`<tr>
+        <td>${r.name}</td>
+        <td class="num">${inr(r.price)}</td>
+        <td class="num">${inr(r.tax)}</td>
+        <td class="num">${inr(r.cogs)}</td>
+        <td class="num"><input type="number" value="${CATALOG.find(c=>c.id===r.id).shipping}" style="width:80px" data-fid="cat-shipping-${r.id}" oninput="updateCatalogField('${r.id}','shipping',this.value)"/></td>
+        <td class="num">${inr(r.pgf)}</td>
+        <td class="num"><b>${inr(r.cm1)}</b></td>
+        <td class="num">${pct(r.cm1pct)}</td>
+        <td class="num">${inr(a.byobCac)}</td>
+        <td class="num" style="color:${r.cm2<0?'var(--danger)':'inherit'};font-weight:600;">${inr(r.cm2)}</td>
+        <td class="num" style="color:${r.cm2pct<0?'var(--danger)':'inherit'};font-weight:600;">${pct(r.cm2pct)}</td>
+      </tr>`).join('');
+
+      // Visual: CM2% by SKU, sorted worst-to-best, horizontal bars
+      const sorted = byobRows.slice().sort((x,y)=>y.cm2pct-x.cm2pct);
+      const maxAbs = Math.max(...sorted.map(r=>Math.abs(r.cm2pct)), 0.01);
+      const chartRows = sorted.map(r=>{
+        const widthPct = (Math.abs(r.cm2pct)/maxAbs*100).toFixed(1);
+        const barColor = r.cm2pct<0 ? '#FF6B6B' : r.cm2pct<0.10 ? '#E0B04A' : '#3ED598';
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <div style="width:220px;font-size:11px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.name}">${r.name}</div>
+          <div style="flex:1;background:var(--border);border-radius:4px;height:14px;position:relative;">
+            <div style="background:${barColor};height:100%;width:${widthPct}%;border-radius:4px;"></div>
+          </div>
+          <div style="width:60px;text-align:right;font-size:11px;font-weight:600;color:${r.cm2pct<0?'var(--danger)':'var(--ink)'};">${pct(r.cm2pct)}</div>
+        </div>`;
+      }).join('');
+
+      return `
+        <div class="section-title" style="margin-top:20px;">BYOB CM1 / CM2 Profitability <span class="n">per-SKU waterfall — Tax, COGS, Shipping, PGF, CAC</span></div>
+        <div class="assumption-note">Separate from the margin table above — this mirrors your BYOB CM2 sheet exactly: CM1 = Price − Tax − COGS − Shipping − PGF. CM2 = CM1 − CAC. Tax and PGF are computed as % of price; Shipping is editable per SKU; CAC is a single shared assumption applied to every SKU.</div>
+        <div class="grid grid-3">
+          <div class="card"><label class="field">Tax % (GST)</label><input type="number" step="0.1" value="${(a.byobTaxPct*100).toFixed(2)}" data-fid="assum-byobTaxPct" oninput="updateAssumption('byobTaxPct', this.value, true)"/></div>
+          <div class="card"><label class="field">PGF % (Payment Gateway Fee)</label><input type="number" step="0.01" value="${(a.byobPgfPct*100).toFixed(2)}" data-fid="assum-byobPgfPct" oninput="updateAssumption('byobPgfPct', this.value, true)"/></div>
+          <div class="card"><label class="field">CAC (₹, shared across SKUs)</label><input type="number" value="${a.byobCac}" data-fid="assum-byobCac" oninput="updateAssumption('byobCac', this.value, false)"/></div>
+        </div>
+
+        <div class="tablewrap" style="margin-top:12px;">
+        <table>
+          <thead><tr><th>SKU</th><th class="num">Price</th><th class="num">Tax</th><th class="num">COGS</th><th class="num">Shipping</th><th class="num">PGF</th><th class="num">CM1</th><th class="num">CM1%</th><th class="num">CAC</th><th class="num">CM2</th><th class="num">CM2%</th></tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+        </div>
+
+        <div class="section-title" style="margin-top:16px;">CM2% by SKU <span class="n">sorted best to worst</span></div>
+        <div class="card">${chartRows}</div>
+      `;
+    })()}
   `;
 }
 function filterCatalog(q){
