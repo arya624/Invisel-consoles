@@ -696,92 +696,6 @@ function prevMonthKey(monthKey){
   const d = new Date(y, m-2, 1); // rolls back to previous month
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
 }
-function computeDailyCM3(day, monthKey){
-  const m = state.months[monthKey];
-  if(!m || !m.dailyLog[day]) return null;
-  const e = m.dailyLog[day];
-  const a = state.assumptions;
-  const totalDays = daysInMonthOf(monthKey);
-  const cogsShopify = (e.shopifyCogs!==undefined && e.shopifyCogs!==null) ? e.shopifyCogs : e.websiteRevenue * a.cogsD2C;
-  const cogsAmazon = (e.amazonCogs!==undefined && e.amazonCogs!==null) ? e.amazonCogs : e.amazonRevenue * a.marketplaceCogsPct;
-  const totalCogs = cogsShopify + cogsAmazon;
-  const totalRevenue = e.websiteRevenue + e.amazonRevenue;
-  const marketingSpend = e.metaSpend + e.googleSpend + e.amazonSpend;
-  const sumCat = (cats)=> (m.overheads||[]).filter(o=>cats.includes(o.category)).reduce((s,o)=>s+o.amount,0);
-  // Overheads are monthly figures — prorated per day since there's no
-  // daily entry for them. Ad spend and revenue are real daily numbers,
-  // not prorated.
-  const directExpensesDaily = sumCat(['Direct Expense'])/totalDays;
-  const techDaily = sumCat(['Technology & Platform'])/totalDays;
-  const otherIndirectDaily = sumCat(['Operating','Administrative & General','Other Indirect','Rent','Salaries','Tools/Software','Agency Fees','Other Variable'])/totalDays;
-  const indirectIncomeDaily = sumCat(['Indirect Income'])/totalDays;
-  const rtoShopify = (e.rtoActualShopify!==undefined && e.rtoActualShopify!==null) ? e.rtoActualShopify : e.websiteRevenue * (a.rtoProvisionPctShopify||0);
-  const rtoAmazon = (e.rtoActualAmazon!==undefined && e.rtoActualAmazon!==null) ? e.rtoActualAmazon : e.amazonRevenue * (a.rtoProvisionPctAmazon||0);
-  const rtoTotal = rtoShopify + rtoAmazon;
-  const cm1 = totalRevenue - totalCogs - directExpensesDaily;
-  const cm2 = cm1 - marketingSpend;
-  const cm3 = cm2 - techDaily - rtoTotal;
-  const netProfit = cm3 - otherIndirectDaily + indirectIncomeDaily;
-  return { totalRevenue, totalCogs, directExpensesDaily, cm1, marketingSpend, cm2, techDaily, rtoTotal, cm3, otherIndirectDaily, indirectIncomeDaily, netProfit };
-}
-/* Matches Arya's real daily profitability sheet exactly, verified against
-   her 27-07-2026 numbers line for line: Gross Revenue -> RTO -> Net
-   Revenue -> COGS -> CM1 -> Marketing -> CM2 -> Expenses & Overheads ->
-   CM3. This nets RTO against revenue BEFORE COGS, which is a different
-   sequence from computeDailyCM3 above (which deducts RTO as a cost near
-   the end) — both are defensible, this one is kept separate specifically
-   to mirror her sheet's own structure, not to replace the other. */
-function computeDailySnapshot(day, monthKey){
-  const m = state.months[monthKey];
-  if(!m || !m.dailyLog[day]) return null;
-  const e = m.dailyLog[day];
-  const a = state.assumptions;
-  const totalDays = daysInMonthOf(monthKey);
-
-  let mtdGrossThroughDay = 0;
-  Object.keys(m.dailyLog).forEach(dStr=>{
-    if(parseInt(dStr) <= day){
-      const ee = m.dailyLog[dStr];
-      mtdGrossThroughDay += (ee.websiteRevenue||0) + (ee.amazonRevenue||0);
-    }
-  });
-
-  const shopifyRevenue = e.websiteRevenue||0;
-  const amazonRevenue = e.amazonRevenue||0;
-  const grossRevenue = shopifyRevenue + amazonRevenue;
-
-  const rtoShopify = (e.rtoActualShopify!==undefined && e.rtoActualShopify!==null) ? e.rtoActualShopify : shopifyRevenue*(a.rtoProvisionPctShopify||0);
-  const rtoAmazon = (e.rtoActualAmazon!==undefined && e.rtoActualAmazon!==null) ? e.rtoActualAmazon : amazonRevenue*(a.rtoProvisionPctAmazon||0);
-  const rtoTotal = rtoShopify + rtoAmazon;
-  const netRevenue = grossRevenue - rtoTotal;
-
-  const cogsShopify = (e.shopifyCogs!==undefined && e.shopifyCogs!==null) ? e.shopifyCogs : shopifyRevenue*a.cogsD2C;
-  const cogsAmazon = (e.amazonCogs!==undefined && e.amazonCogs!==null) ? e.amazonCogs : amazonRevenue*a.marketplaceCogsPct;
-  const cogsTotal = cogsShopify + cogsAmazon;
-  const shopifyCogsPct = shopifyRevenue ? cogsShopify/shopifyRevenue : 0;
-  const amazonCogsPct = amazonRevenue ? cogsAmazon/amazonRevenue : 0;
-
-  const cm1 = netRevenue - cogsTotal;
-  const marketingAdExp = (e.metaSpend||0)+(e.googleSpend||0)+(e.amazonSpend||0);
-  const cm2 = cm1 - marketingAdExp;
-
-  const sumCat = (cats)=> (m.overheads||[]).filter(o=>cats.includes(o.category)).reduce((s,o)=>s+o.amount,0);
-  const expensesOverheads = sumCat(['Direct Expense','Technology & Platform','Operating','Administrative & General','Other Indirect','Rent','Salaries','Tools/Software','Agency Fees','Other Variable'])/totalDays;
-  const cm3 = cm2 - expensesOverheads;
-
-  const pctOfMtd = v => mtdGrossThroughDay ? v/mtdGrossThroughDay : 0;
-
-  return {
-    grossRevenue, shopifyRevenue, amazonRevenue, rtoTotal, netRevenue,
-    cogsTotal, cogsShopify, cogsAmazon, shopifyCogsPct, amazonCogsPct,
-    cm1, marketingAdExp, cm2, expensesOverheads, cm3,
-    pct: {
-      grossRevenue: pctOfMtd(grossRevenue), shopifyRevenue: pctOfMtd(shopifyRevenue), amazonRevenue: pctOfMtd(amazonRevenue),
-      netRevenue: pctOfMtd(netRevenue), cogsTotal: pctOfMtd(cogsTotal), cm1: pctOfMtd(cm1),
-      marketingAdExp: pctOfMtd(marketingAdExp), cm2: pctOfMtd(cm2), expensesOverheads: pctOfMtd(expensesOverheads), cm3: pctOfMtd(cm3)
-    }
-  };
-}
 function getMonthDayInfo(monthKey, asOfDateStr){
   const totalDays = daysInMonthOf(monthKey);
   const asOf = new Date(asOfDateStr+"T00:00:00");
@@ -1302,31 +1216,47 @@ function renderOverview(){
     </tr>`;
   }).join('');
 
+  // Uses the exact same formula, overhead proration, and revenue base
+  // as the Daily & MTD Profitability tab's MTD section — deliberately
+  // NOT a separate calculation, so this card and that tab can never
+  // show two different numbers for what's labeled the same thing.
   const execMonthCogsRto = computeMonthCogsRto(activeKey);
-  const execAWithB2B = Object.assign({}, s.assumptions, { cogsB2C_or_B2B: s.assumptions.cogsB2B });
-  const execActualLine = computeIncomeStatementLine(
-    { shopify:m.mtd.shopifyRevenue, marketplace:m.mtd.marketplaceRevenue, b2b:m.mtd.b2bRevenue||0, b2c:m.mtd.b2cRevenue||0, directIncome:m.mtd.directIncome||0 },
-    P.mtdSpend, m.overheads||[], execAWithB2B,
-    { cogsShopify: execMonthCogsRto.cogsShopify, cogsMarketplace: execMonthCogsRto.cogsMarketplace, rtoShopify: execMonthCogsRto.rtoShopify, rtoAmazon: execMonthCogsRto.rtoAmazon }
+  const execOverheadsMonthlyTotal = (m.overheads||[]).filter(o=>o.category!=='Indirect Income').reduce((s,o)=>s+(o.amount||0),0);
+  const execMtdOverheads = totalDays ? (execOverheadsMonthlyTotal/totalDays)*daysElapsed : 0;
+  const execMtdW = computeProfitabilityWaterfall(
+    { shopifyRevenue: m.mtd.shopifyRevenue, amazonRevenue: m.mtd.marketplaceRevenue,
+      shopifyCogs: execMonthCogsRto.cogsShopify, amazonCogs: execMonthCogsRto.cogsMarketplace,
+      rtoShopify: execMonthCogsRto.rtoShopify, rtoAmazon: execMonthCogsRto.rtoAmazon },
+    P.mtdSpend, execMtdOverheads, s.assumptions
   );
   const execPaceAhead = daysElapsed>0 ? (P.mtdTotal/daysElapsed) >= P.requiredDaily : true;
 
   // CM3 alert — flag when CM3 has been negative for 3+ of the last 5
-  // logged days, so a bad stretch surfaces on its own instead of
-  // requiring someone to spot it in a trend chart.
+  // logged days. Uses the same per-day formula and overhead proration
+  // as the Profitability tab's Daily section, for the same reason.
   const execLoggedDays = Object.keys(m.dailyLog).map(Number).sort((a,b)=>a-b);
   const execLast5 = execLoggedDays.slice(-5);
-  const execLast5Cm3 = execLast5.map(d=>computeDailyCM3(d, activeKey)).filter(Boolean);
+  const execDailyOverheads = totalDays ? execOverheadsMonthlyTotal/totalDays : 0;
+  const execLast5Cm3 = execLast5.map(d=>{
+    const e = m.dailyLog[d];
+    return computeProfitabilityWaterfall(
+      { shopifyRevenue: e.websiteRevenue||0, amazonRevenue: e.amazonRevenue||0,
+        shopifyCogs: e.shopifyCogs, amazonCogs: e.amazonCogs,
+        rtoShopify: e.rtoActualShopify, rtoAmazon: e.rtoActualAmazon },
+      (e.metaSpend||0)+(e.googleSpend||0)+(e.amazonSpend||0),
+      execDailyOverheads, s.assumptions
+    );
+  });
   const execNegativeDays = execLast5Cm3.filter(dp=>dp.cm3<0).length;
   const cm3AlertHtml = execNegativeDays>=3
-    ? `<div class="assumption-note" style="border-color:var(--danger);background:var(--danger-soft);color:var(--danger);margin-bottom:14px;"><b>CM3 has been negative on ${execNegativeDays} of the last ${execLast5Cm3.length} logged days.</b> Check the Daily P&L table in Income Statement to see which days and why.</div>`
+    ? `<div class="assumption-note" style="border-color:var(--danger);background:var(--danger-soft);color:var(--danger);margin-bottom:14px;"><b>CM3 has been negative on ${execNegativeDays} of the last ${execLast5Cm3.length} logged days.</b> Check the Daily &amp; MTD Profitability tab to see which days and why.</div>`
     : '';
 
   el('panel-overview').innerHTML = `
     ${cm3AlertHtml}
     <div class="grid grid-4" style="margin-bottom:18px;">
-      <div class="card kpi"><div class="label">MTD Revenue vs Target</div><div class="value">${inr(P.mtdTotal)}</div><div class="sub">${pct(m.targets.total? P.mtdTotal/m.targets.total:0)} of ${inrLakh(m.targets.total)}</div></div>
-      <div class="card kpi"><div class="label">MTD CM3</div><div class="value" style="color:${execActualLine.cm3<0?'var(--danger)':'var(--good)'}">${inr(execActualLine.cm3)}</div><div class="sub">${pct(execActualLine.cm3pct)} of revenue</div></div>
+      <div class="card kpi"><div class="label">MTD Revenue vs Target</div><div class="value">${inr(execMtdW.grossRevenue)}</div><div class="sub">${pct(m.targets.total? execMtdW.grossRevenue/m.targets.total:0)} of ${inrLakh(m.targets.total)}</div></div>
+      <div class="card kpi"><div class="label">MTD CM3</div><div class="value" style="color:${execMtdW.cm3<0?'var(--danger)':'var(--good)'}">${inr(execMtdW.cm3)}</div><div class="sub">${pct(execMtdW.cm3pct)} of revenue</div></div>
       <div class="card kpi"><div class="label">Days Remaining</div><div class="value">${daysRemaining}</div><div class="sub">of ${totalDays} in ${monthLabel(activeKey)}</div></div>
       <div class="card kpi"><div class="label">Pace Status</div><div class="value" style="color:${execPaceAhead?'var(--good)':'var(--danger)'}">${execPaceAhead?'Ahead':'Behind'}</div><div class="sub">vs required daily run-rate</div></div>
     </div>
@@ -2110,9 +2040,21 @@ function renderIncome(){
 
       const loggedDays = Object.keys(m.dailyLog).map(Number).sort((a,b)=>a-b);
       const last7Days = loggedDays.slice(-7);
+      const scaleHoldOverheadsMonthlyTotal = (m.overheads||[]).filter(o=>o.category!=='Indirect Income').reduce((s,o)=>s+(o.amount||0),0);
+      const scaleHoldDailyOverheads = P.dayInfo.totalDays ? scaleHoldOverheadsMonthlyTotal/P.dayInfo.totalDays : 0;
+      function computeDailyWaterfall(day){
+        const e = m.dailyLog[day];
+        return computeProfitabilityWaterfall(
+          { shopifyRevenue: e.websiteRevenue||0, amazonRevenue: e.amazonRevenue||0,
+            shopifyCogs: e.shopifyCogs, amazonCogs: e.amazonCogs,
+            rtoShopify: e.rtoActualShopify, rtoAmazon: e.rtoActualAmazon },
+          (e.metaSpend||0)+(e.googleSpend||0)+(e.amazonSpend||0),
+          scaleHoldDailyOverheads, a
+        );
+      }
       let cm3TrendHtml = '<div class="hint">No days logged yet this month to chart.</div>';
       if(last7Days.length){
-        const points = last7Days.map(d=>({ day:d, ...computeDailyCM3(d, activeKey) }));
+        const points = last7Days.map(d=>({ day:d, ...computeDailyWaterfall(d) }));
         const values = points.map(p=>p.cm3);
         const min = Math.min(...values, 0);
         const max = Math.max(...values, 0);
@@ -2135,7 +2077,7 @@ function renderIncome(){
           <line x1="${padding}" y1="${zeroY.toFixed(1)}" x2="${w-padding}" y2="${zeroY.toFixed(1)}" stroke="#DBE2DF" stroke-dasharray="3,3" />
           ${line}${bars}
         </svg>
-        <div class="hint">Dashed line = breakeven (CM3 = 0). Overheads are the monthly figure divided evenly across days — ad spend and revenue are the real daily numbers, so this is an estimate, not exact daily accounting.</div>`;
+        <div class="hint">Dashed line = breakeven (CM3 = 0). Same formula as the Daily &amp; MTD Profitability tab — overheads are the monthly figure divided evenly across days; ad spend and revenue are the real daily numbers.</div>`;
       }
 
       return `
@@ -2154,23 +2096,25 @@ function renderIncome(){
         <div class="section-title" style="margin-top:16px;">CM3 Trend <span class="n">last ${last7Days.length} logged day${last7Days.length===1?'':'s'}</span></div>
         <div class="card">${cm3TrendHtml}</div>
 
-        <div class="section-title" style="margin-top:16px;">Daily P&amp;L <span class="n">every logged day — revenue through CM3</span></div>
-        <div class="assumption-note">Overheads (Direct Expenses, Tech, Other Indirect) are the monthly figure divided evenly across the month's days — real numbers for revenue, spend, COGS, and RTO where you've entered them.</div>
+        <div class="section-title" style="margin-top:16px;">Daily P&amp;L <span class="n">every logged day — same formula as Daily &amp; MTD Profitability</span></div>
+        <div class="assumption-note">Overheads are the monthly figure divided evenly across the month's days — real numbers for revenue, spend, COGS, and RTO where you've entered them.</div>
         ${loggedDays.length===0 ? '<div class="hint">No days logged yet this month.</div>' : `
         <div class="tablewrap"><table>
-          <thead><tr><th>Day</th><th class="num">Revenue</th><th class="num">COGS</th><th class="num">Direct Exp</th><th class="num">CM1</th><th class="num">Ad Spend</th><th class="num">CM2</th><th class="num">Tech</th><th class="num">RTO</th><th class="num">CM3</th></tr></thead>
+          <thead><tr><th>Day</th><th class="num">Revenue</th><th class="num">RTO</th><th class="num">Tax</th><th class="num">COGS</th><th class="num">Shipping</th><th class="num">PGF</th><th class="num">CM1</th><th class="num">Ad Spend</th><th class="num">CM2</th><th class="num">Overheads</th><th class="num">CM3</th></tr></thead>
           <tbody>${loggedDays.map(d=>{
-            const dp = computeDailyCM3(d, activeKey);
+            const dp = computeDailyWaterfall(d);
             return `<tr>
               <td>${monthLabel(activeKey).split(' ')[0]} ${d}</td>
-              <td class="num">${inr(dp.totalRevenue)}</td>
-              <td class="num">${inr(dp.totalCogs)}</td>
-              <td class="num">${inr(dp.directExpensesDaily)}</td>
+              <td class="num">${inr(dp.grossRevenue)}</td>
+              <td class="num">${inr(dp.rtoTotal)}</td>
+              <td class="num">${inr(dp.taxTotal)}</td>
+              <td class="num">${inr(dp.cogsTotal)}</td>
+              <td class="num">${inr(dp.shippingTotal)}</td>
+              <td class="num">${inr(dp.pgfTotal)}</td>
               <td class="num">${inr(dp.cm1)}</td>
               <td class="num">${inr(dp.marketingSpend)}</td>
               <td class="num">${inr(dp.cm2)}</td>
-              <td class="num">${inr(dp.techDaily)}</td>
-              <td class="num">${inr(dp.rtoTotal)}</td>
+              <td class="num">${inr(dp.overheadsTotal)}</td>
               <td class="num" style="color:${dp.cm3<0?'var(--danger)':'inherit'};font-weight:600;">${inr(dp.cm3)}</td>
             </tr>`;
           }).join('')}</tbody>
