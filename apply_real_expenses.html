@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Invisel — Apply Real Itemized Expenses</title>
+<style>
+  body{font-family:'IBM Plex Mono',monospace;background:#0F1419;color:#E6EDEA;padding:30px;max-width:900px;margin:0 auto;}
+  h1{font-family:sans-serif;font-size:20px;color:#fff;}
+  p{font-family:sans-serif;font-size:13.5px;color:#B7C2C7;line-height:1.6;}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin:14px 0;}
+  th,td{padding:6px 8px;border-bottom:1px solid #2A343A;text-align:right;}
+  th:first-child,td:first-child{text-align:left;}
+  th{color:#8A9AA3;font-weight:600;text-transform:uppercase;font-size:9.5px;}
+  .diff{color:#F0C868;font-weight:600;}
+  .checkrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #2A343A;font-family:sans-serif;font-size:14px;}
+  .btn{background:#0C8C82;color:#fff;border:none;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:sans-serif;}
+  .btn:hover{background:#075E57;}
+  .btn:disabled{background:#3A444A;cursor:not-allowed;}
+  #status{margin-top:16px;padding:14px 16px;border-radius:8px;font-family:sans-serif;font-size:13.5px;display:none;white-space:pre-wrap;line-height:1.6;}
+  .status-ok{background:#123324;border:1px solid #3ED598;color:#3ED598;}
+  .status-err{background:#3A1A1A;border:1px solid #FF6B6B;color:#FF6B6B;}
+  .status-progress{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;}
+  .warn{background:#3A2A0A;border:1px solid #E0B04A;color:#F0C868;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13.5px;line-height:1.5;}
+  .note{background:#161D22;border:1px solid #2A343A;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-family:sans-serif;font-size:13px;color:#B7C2C7;line-height:1.6;}
+</style>
+</head>
+<body>
+<h1>Apply Real Itemized Expenses (from your July sheet)</h1>
+
+<div class="warn">
+  <b>These are July's real, actual figures</b> — Warehouse Rent, Office
+  Rent, 30 individual named salary lines, and 5 software subscriptions,
+  summing to exactly ₹17,63,774 (verified against your sheet line by
+  line). Agency Fees (₹1,87,000) and Other Variable (₹3,47,000) aren't
+  itemized in what you shared, so those two stay as single lines until
+  you have the breakdown. Applying this to a month other than July uses
+  July's numbers as the starting point — edit anything that's changed
+  (a raise, someone who left, a new tool) right in the console after.
+</div>
+
+<p id="loadingMsg">Loading months from the backend...</p>
+<div id="monthList"></div>
+
+<button class="btn" id="applyBtn" onclick="runUpdate()" disabled>Select at least one month first</button>
+<div id="status"></div>
+
+<script>
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx7Iu7XJlvEQGQRfS8gBzleETxvCeqAHtVMRty0hIHy9IKtiLo9gxP9-sGN1Xw6Gymr/exec";
+const WRITE_TOKEN = "invisel-2026-9x7q2m";
+
+const REAL_ITEMIZED_OVERHEADS = [{"name": "Warehouse Rent", "category": "Rent", "amount": 25000}, {"name": "Office Rent Fixed", "category": "Rent", "amount": 80000}, {"name": "Sumedh Nandkishor", "category": "Salaries", "amount": 150000}, {"name": "Arya", "category": "Salaries", "amount": 30000}, {"name": "Sujal", "category": "Salaries", "amount": 27000}, {"name": "Sampada", "category": "Salaries", "amount": 35000}, {"name": "Kunal", "category": "Salaries", "amount": 30000}, {"name": "Influencer Marketer", "category": "Salaries", "amount": 60000}, {"name": "Santosh Tonsey", "category": "Salaries", "amount": 30000}, {"name": "Avishkar Mohite", "category": "Salaries", "amount": 30000}, {"name": "Vaishnavi Deshpande", "category": "Salaries", "amount": 20000}, {"name": "Ritu Samir Parekh", "category": "Salaries", "amount": 33393}, {"name": "Yash Taware", "category": "Salaries", "amount": 30200}, {"name": "Mayur", "category": "Salaries", "amount": 40000}, {"name": "Atharva Kulkarni", "category": "Salaries", "amount": 25000}, {"name": "Karishma", "category": "Salaries", "amount": 30000}, {"name": "Lady Worker", "category": "Salaries", "amount": 72000}, {"name": "Lady Worker", "category": "Salaries", "amount": 12000}, {"name": "MEHAK", "category": "Salaries", "amount": 12000}, {"name": "reshma", "category": "Salaries", "amount": 12000}, {"name": "NIKITA SAWALE", "category": "Salaries", "amount": 12000}, {"name": "Rupali", "category": "Salaries", "amount": 12000}, {"name": "SAYALI YADAV", "category": "Salaries", "amount": 10000}, {"name": "Kunda", "category": "Salaries", "amount": 12000}, {"name": "Mayuri", "category": "Salaries", "amount": 12000}, {"name": "Anuj", "category": "Salaries", "amount": 12000}, {"name": "Atharva Ulangwar", "category": "Salaries", "amount": 150000}, {"name": "Ritu Samir Parekh (2)", "category": "Salaries", "amount": 72000}, {"name": "Khushboo", "category": "Salaries", "amount": 50000}, {"name": "Contract Labour", "category": "Salaries", "amount": 5000}, {"name": "Santosh Tonsey (2)", "category": "Salaries", "amount": 30000}, {"name": "Yash Jain", "category": "Salaries", "amount": 30000}, {"name": "Adobe", "category": "Tools/Software", "amount": 1285}, {"name": "Shopify", "category": "Tools/Software", "amount": 15000}, {"name": "Odoo", "category": "Tools/Software", "amount": 896}, {"name": "Grippi", "category": "Tools/Software", "amount": 1000}, {"name": "Shiprocket", "category": "Tools/Software", "amount": 21000}, {"name": "Agency Fees (not yet itemized)", "category": "Agency Fees", "amount": 187000}, {"name": "Other Variable (not yet itemized)", "category": "Other Variable", "amount": 347000}];
+const REAL_TOTAL = REAL_ITEMIZED_OVERHEADS.reduce((s,o)=>s+o.amount,0);
+
+function inr(n){ return "Rs " + Math.round(n).toLocaleString('en-IN'); }
+
+let cachedState = null;
+
+async function loadMonths(){
+  try{
+    const res = await fetch(APPS_SCRIPT_URL + '?key=invisel-console-state');
+    const data = await res.json();
+    if(!data || !data.value){ throw new Error('No state found on backend.'); }
+    cachedState = JSON.parse(data.value);
+    if(!cachedState.months) cachedState.months = {};
+
+    const monthKeys = Object.keys(cachedState.months).sort();
+    if(monthKeys.length===0){
+      document.getElementById('loadingMsg').textContent = 'No months found on the backend yet.';
+      return;
+    }
+
+    let html = '';
+    monthKeys.forEach(function(mk){
+      const m = cachedState.months[mk];
+      const currentTotal = (m.overheads||[]).reduce((s,o)=>s+(o.amount||0),0);
+      const differs = Math.abs(currentTotal - REAL_TOTAL) > 0.5;
+      html += "<label class='checkrow'><input type='checkbox' data-month='" + mk + "' checked style='width:18px;height:18px;'/> "
+        + "<span style='flex:1;'>" + mk + " — current total: " + inr(currentTotal) + " (" + (m.overheads||[]).length + " line" + ((m.overheads||[]).length===1?'':'s') + ")</span>"
+        + "<span class='" + (differs?'diff':'') + "'>&rarr; " + inr(REAL_TOTAL) + " (39 lines)</span></label>";
+    });
+    document.getElementById('monthList').innerHTML = html;
+    document.getElementById('loadingMsg').style.display = 'none';
+    document.getElementById('applyBtn').disabled = false;
+    document.getElementById('applyBtn').textContent = 'Apply to Checked Months';
+  }catch(e){
+    document.getElementById('loadingMsg').textContent = 'Could not load: ' + e.message;
+  }
+}
+loadMonths();
+
+async function runUpdate(){
+  const btn = document.getElementById('applyBtn');
+  const status = document.getElementById('status');
+  const checked = Array.from(document.querySelectorAll('input[data-month]:checked')).map(el=>el.getAttribute('data-month'));
+  if(checked.length===0){ alert('Select at least one month.'); return; }
+
+  btn.disabled = true;
+  status.style.display = 'block';
+  status.className = 'status-progress';
+  status.textContent = 'Applying to ' + checked.length + ' month(s)...';
+
+  try{
+    const state = cachedState;
+    checked.forEach(function(mk){
+      state.months[mk].overheads = JSON.parse(JSON.stringify(REAL_ITEMIZED_OVERHEADS));
+    });
+
+    state.lastSavedAt = new Date().toISOString();
+    state.lastSavedBy = 'Real Itemized Expenses Import';
+
+    const writeRes = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'set', key:'invisel-console-state', value: JSON.stringify(state), token: WRITE_TOKEN, updatedBy: 'Real Itemized Expenses Import' })
+    });
+    const writeData = await writeRes.json();
+    if(!writeData.ok){ throw new Error('Write rejected: ' + JSON.stringify(writeData)); }
+
+    status.className = 'status-ok';
+    status.textContent = 'Success. Applied the 39-line itemized breakdown to: ' + checked.join(', ') + '.\n\n'
+      + 'Total per month is now ' + inr(REAL_TOTAL) + '.\n\n'
+      + 'Reload the Growth console\'s Expenses & Overheads tab to see it.';
+  }catch(e){
+    status.className = 'status-err';
+    status.textContent = 'Update failed: ' + e.message + '\n\nSafe to retry.';
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
